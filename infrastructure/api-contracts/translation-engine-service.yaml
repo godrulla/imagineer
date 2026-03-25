@@ -1,0 +1,1880 @@
+openapi: 3.0.3
+info:
+  title: Imagineer Translation Engine Service API
+  description: |
+    The Translation Engine Service transforms parsed design data into LLM-ready prompts 
+    and various output formats. It manages translation templates, executes LLM interactions, 
+    and handles the intelligent conversion of visual designs into structured descriptions.
+    
+    ## Key Capabilities
+    - Design-to-prompt translation using configurable templates
+    - Multi-LLM provider support (OpenAI, Anthropic, Google, etc.)
+    - Template management and versioning
+    - Batch translation processing
+    - Quality assessment and optimization
+    - Custom output format generation
+    
+    ## Authentication
+    All endpoints require organization-level authentication via API key or JWT token.
+    Multi-tenant access is enforced at the organization level.
+  version: "1.0.0"
+  contact:
+    name: Imagineer API Support
+    url: https://docs.imagineer.dev
+    email: api-support@imagineer.dev
+  license:
+    name: Proprietary
+    url: https://imagineer.dev/license
+
+servers:
+  - url: https://api.imagineer.dev/v1/translate
+    description: Production API
+  - url: https://staging-api.imagineer.dev/v1/translate
+    description: Staging API
+  - url: http://localhost:8002/v1
+    description: Local Development
+
+security:
+  - apiKey: []
+  - bearerAuth: []
+
+paths:
+  # ============================================================================
+  # HEALTH & STATUS
+  # ============================================================================
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Returns service health status and LLM provider availability
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /status:
+    get:
+      summary: Detailed service status
+      description: Returns detailed service status including LLM provider health
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: Detailed service status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceStatus'
+
+  # ============================================================================
+  # TRANSLATION TEMPLATES
+  # ============================================================================
+  /templates:
+    get:
+      summary: List translation templates
+      description: Retrieve paginated list of translation templates
+      tags: [Templates]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SortParam'
+        - name: category
+          in: query
+          description: Filter by template category
+          schema:
+            type: string
+        - name: target_format
+          in: query
+          description: Filter by target output format
+          schema:
+            $ref: '#/components/schemas/OutputFormat'
+        - name: llm_provider
+          in: query
+          description: Filter by LLM provider
+          schema:
+            $ref: '#/components/schemas/LLMProvider'
+        - name: is_public
+          in: query
+          description: Filter by public/private templates
+          schema:
+            type: boolean
+        - name: search
+          in: query
+          description: Search in template names and descriptions
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        '200':
+          description: List of translation templates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/TranslationTemplate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      summary: Create translation template
+      description: Create a new translation template
+      tags: [Templates]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTemplateRequest'
+      responses:
+        '201':
+          description: Template created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationTemplate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /templates/{templateId}:
+    parameters:
+      - $ref: '#/components/parameters/TemplateIdParam'
+    
+    get:
+      summary: Get template details
+      description: Retrieve detailed information about a translation template
+      tags: [Templates]
+      responses:
+        '200':
+          description: Template details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      summary: Update template
+      description: Update translation template configuration
+      tags: [Templates]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTemplateRequest'
+      responses:
+        '200':
+          description: Template updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationTemplate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Delete template
+      description: Soft delete a translation template
+      tags: [Templates]
+      responses:
+        '204':
+          description: Template deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Cannot delete template that is in use
+
+  /templates/{templateId}/test:
+    parameters:
+      - $ref: '#/components/parameters/TemplateIdParam'
+    
+    post:
+      summary: Test template
+      description: Test a translation template with sample data
+      tags: [Templates]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestTemplateRequest'
+      responses:
+        '200':
+          description: Template test results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemplateTestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /templates/{templateId}/clone:
+    parameters:
+      - $ref: '#/components/parameters/TemplateIdParam'
+    
+    post:
+      summary: Clone template
+      description: Create a copy of an existing template
+      tags: [Templates]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloneTemplateRequest'
+      responses:
+        '201':
+          description: Template cloned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationTemplate'
+
+  # ============================================================================
+  # TRANSLATION JOBS
+  # ============================================================================
+  /jobs:
+    get:
+      summary: List translation jobs
+      description: Retrieve paginated list of translation jobs
+      tags: [Translation Jobs]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SortParam'
+        - name: project_id
+          in: query
+          description: Filter by project ID
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          description: Filter by job status
+          schema:
+            $ref: '#/components/schemas/JobStatus'
+        - name: llm_provider
+          in: query
+          description: Filter by LLM provider
+          schema:
+            $ref: '#/components/schemas/LLMProvider'
+        - name: translation_type
+          in: query
+          description: Filter by translation type
+          schema:
+            $ref: '#/components/schemas/TranslationType'
+      responses:
+        '200':
+          description: List of translation jobs
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/TranslationJob'
+
+    post:
+      summary: Create translation job
+      description: Create a new translation job to convert design to prompts
+      tags: [Translation Jobs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTranslationJobRequest'
+      responses:
+        '201':
+          description: Translation job created and queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationJob'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /jobs/{jobId}:
+    parameters:
+      - $ref: '#/components/parameters/JobIdParam'
+    
+    get:
+      summary: Get translation job details
+      description: Retrieve detailed information about a translation job
+      tags: [Translation Jobs]
+      responses:
+        '200':
+          description: Translation job details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationJobDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Cancel translation job
+      description: Cancel a pending or running translation job
+      tags: [Translation Jobs]
+      responses:
+        '204':
+          description: Job cancelled successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /jobs/{jobId}/retry:
+    parameters:
+      - $ref: '#/components/parameters/JobIdParam'
+    
+    post:
+      summary: Retry translation job
+      description: Retry a failed translation job
+      tags: [Translation Jobs]
+      responses:
+        '202':
+          description: Job retry initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationJob'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================================================
+  # DIRECT TRANSLATION
+  # ============================================================================
+  /translate:
+    post:
+      summary: Direct translation
+      description: Perform immediate translation without creating a persistent job
+      tags: [Direct Translation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DirectTranslationRequest'
+      responses:
+        '200':
+          description: Translation completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '408':
+          description: Translation timeout
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+  /translate/batch:
+    post:
+      summary: Batch translation
+      description: Translate multiple designs in a single batch operation
+      tags: [Direct Translation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchTranslationRequest'
+      responses:
+        '202':
+          description: Batch translation job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchTranslationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # ============================================================================
+  # LLM PROVIDERS
+  # ============================================================================
+  /providers:
+    get:
+      summary: List LLM providers
+      description: Get available LLM providers and their capabilities
+      tags: [LLM Providers]
+      responses:
+        '200':
+          description: List of available LLM providers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LLMProviderInfo'
+
+  /providers/{provider}/models:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        description: LLM provider identifier
+        schema:
+          $ref: '#/components/schemas/LLMProvider'
+    
+    get:
+      summary: List provider models
+      description: Get available models for a specific LLM provider
+      tags: [LLM Providers]
+      responses:
+        '200':
+          description: List of available models
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LLMModel'
+
+  /providers/{provider}/test:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        description: LLM provider identifier
+        schema:
+          $ref: '#/components/schemas/LLMProvider'
+    
+    post:
+      summary: Test LLM provider
+      description: Test connectivity and response from an LLM provider
+      tags: [LLM Providers]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestProviderRequest'
+      responses:
+        '200':
+          description: Provider test successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderTestResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # ============================================================================
+  # TRANSLATION RESULTS
+  # ============================================================================
+  /results/{resultId}:
+    parameters:
+      - name: resultId
+        in: path
+        required: true
+        description: Translation result identifier
+        schema:
+          type: string
+          format: uuid
+    
+    get:
+      summary: Get translation result
+      description: Retrieve a specific translation result
+      tags: [Results]
+      responses:
+        '200':
+          description: Translation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationResultDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /results/{resultId}/feedback:
+    parameters:
+      - name: resultId
+        in: path
+        required: true
+        description: Translation result identifier
+        schema:
+          type: string
+          format: uuid
+    
+    post:
+      summary: Submit result feedback
+      description: Submit feedback on translation quality
+      tags: [Results]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResultFeedbackRequest'
+      responses:
+        '200':
+          description: Feedback submitted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================================================
+  # ANALYTICS & OPTIMIZATION
+  # ============================================================================
+  /analytics/usage:
+    get:
+      summary: Get usage analytics
+      description: Retrieve translation usage analytics for the organization
+      tags: [Analytics]
+      parameters:
+        - name: start_date
+          in: query
+          description: Start date for analytics (ISO 8601)
+          schema:
+            type: string
+            format: date
+        - name: end_date
+          in: query
+          description: End date for analytics (ISO 8601)
+          schema:
+            type: string
+            format: date
+        - name: granularity
+          in: query
+          description: Data granularity
+          schema:
+            type: string
+            enum: [hour, day, week, month]
+            default: day
+      responses:
+        '200':
+          description: Usage analytics data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageAnalytics'
+
+  /analytics/quality:
+    get:
+      summary: Get quality metrics
+      description: Retrieve translation quality metrics and trends
+      tags: [Analytics]
+      parameters:
+        - name: template_id
+          in: query
+          description: Filter by template ID
+          schema:
+            type: string
+            format: uuid
+        - name: llm_provider
+          in: query
+          description: Filter by LLM provider
+          schema:
+            $ref: '#/components/schemas/LLMProvider'
+      responses:
+        '200':
+          description: Quality metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QualityMetrics'
+
+# ============================================================================
+# COMPONENTS
+# ============================================================================
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Organization API key for authentication
+    
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for user authentication
+
+  parameters:
+    TemplateIdParam:
+      name: templateId
+      in: path
+      required: true
+      description: Unique template identifier
+      schema:
+        type: string
+        format: uuid
+    
+    JobIdParam:
+      name: jobId
+      in: path
+      required: true
+      description: Unique job identifier
+      schema:
+        type: string
+        format: uuid
+    
+    PageParam:
+      name: page
+      in: query
+      description: Page number for pagination
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    
+    LimitParam:
+      name: limit
+      in: query
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    
+    SortParam:
+      name: sort
+      in: query
+      description: Sort order (field:direction)
+      schema:
+        type: string
+        pattern: '^[a-zA-Z_][a-zA-Z0-9_]*:(asc|desc)$'
+        default: 'created_at:desc'
+
+  schemas:
+    # ========================================================================
+    # CORE DATA MODELS
+    # ========================================================================
+    TranslationTemplate:
+      type: object
+      required: [id, organization_id, name, prompt_template, target_format, llm_provider, status, created_at, created_by]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique template identifier
+        organization_id:
+          type: string
+          format: uuid
+          description: Organization that owns this template
+        name:
+          type: string
+          maxLength: 255
+          description: Template display name
+        description:
+          type: string
+          nullable: true
+          description: Template description
+        category:
+          type: string
+          maxLength: 100
+          nullable: true
+          description: Template category
+        prompt_template:
+          type: string
+          description: Main prompt template with variables
+        system_prompt:
+          type: string
+          nullable: true
+          description: System/context prompt for LLM
+        example_input:
+          type: object
+          nullable: true
+          description: Example input data for testing
+        example_output:
+          type: string
+          nullable: true
+          description: Example expected output
+        target_format:
+          $ref: '#/components/schemas/OutputFormat'
+        llm_provider:
+          $ref: '#/components/schemas/LLMProvider'
+        model_version:
+          type: string
+          maxLength: 100
+          nullable: true
+          description: Specific model version to use
+        max_tokens:
+          type: integer
+          minimum: 100
+          maximum: 32000
+          default: 4000
+          description: Maximum tokens for LLM response
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+          default: 0.7
+          description: LLM temperature setting
+        parameters:
+          type: object
+          description: Template-specific parameters
+        variables:
+          type: object
+          description: Template variable definitions
+        usage_count:
+          type: integer
+          minimum: 0
+          description: Number of times template has been used
+        average_rating:
+          type: number
+          minimum: 1
+          maximum: 5
+          nullable: true
+          description: Average user rating
+        success_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+          nullable: true
+          description: Success rate (0-1)
+        version:
+          type: integer
+          minimum: 1
+          default: 1
+          description: Template version number
+        parent_template_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Parent template if this is a version/fork
+        is_public:
+          type: boolean
+          default: false
+          description: Whether template is publicly available
+        is_system_template:
+          type: boolean
+          default: false
+          description: Whether this is a system-provided template
+        status:
+          $ref: '#/components/schemas/TemplateStatus'
+        created_at:
+          type: string
+          format: date-time
+          description: Template creation timestamp
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+        created_by:
+          type: string
+          format: uuid
+          description: User who created the template
+
+    TemplateDetail:
+      allOf:
+        - $ref: '#/components/schemas/TranslationTemplate'
+        - type: object
+          properties:
+            usage_stats:
+              $ref: '#/components/schemas/TemplateUsageStats'
+            recent_jobs:
+              type: array
+              items:
+                $ref: '#/components/schemas/TranslationJob'
+              description: Recent jobs using this template
+            version_history:
+              type: array
+              items:
+                $ref: '#/components/schemas/TemplateVersion'
+              description: Template version history
+
+    TranslationJob:
+      type: object
+      required: [id, organization_id, project_id, llm_provider, model_version, user_prompt, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique job identifier
+        organization_id:
+          type: string
+          format: uuid
+          description: Organization that owns this job
+        project_id:
+          type: string
+          format: uuid
+          description: Associated project
+        design_file_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Source design file
+        parsed_design_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Parsed design data
+        template_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Template used for translation
+        job_name:
+          type: string
+          maxLength: 255
+          nullable: true
+          description: Custom job name
+        translation_type:
+          $ref: '#/components/schemas/TranslationType'
+        llm_provider:
+          $ref: '#/components/schemas/LLMProvider'
+        model_version:
+          type: string
+          maxLength: 100
+          description: LLM model version used
+        system_prompt:
+          type: string
+          nullable: true
+          description: System prompt used
+        user_prompt:
+          type: string
+          description: User prompt sent to LLM
+        max_tokens:
+          type: integer
+          minimum: 100
+          maximum: 32000
+          default: 4000
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+          default: 0.7
+        top_p:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 1.0
+        frequency_penalty:
+          type: number
+          minimum: -2
+          maximum: 2
+          default: 0
+        presence_penalty:
+          type: number
+          minimum: -2
+          maximum: 2
+          default: 0
+        input_data_size:
+          type: integer
+          minimum: 0
+          description: Size of input data in bytes
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 10
+          default: 0
+        retry_count:
+          type: integer
+          minimum: 0
+          default: 0
+        max_retries:
+          type: integer
+          minimum: 0
+          default: 3
+        queued_at:
+          type: string
+          format: date-time
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_seconds:
+          type: number
+          minimum: 0
+          nullable: true
+        tokens_used:
+          type: integer
+          minimum: 0
+          nullable: true
+        cost_usd:
+          type: number
+          minimum: 0
+          nullable: true
+        quality_score:
+          type: number
+          minimum: 0
+          maximum: 1
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        error_code:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+          format: uuid
+          description: User who created the job
+
+    TranslationJobDetail:
+      allOf:
+        - $ref: '#/components/schemas/TranslationJob'
+        - type: object
+          properties:
+            input_data:
+              type: object
+              description: Input design data
+            context_data:
+              type: object
+              description: Additional context data
+            output_data:
+              type: object
+              description: Translation results
+            execution_logs:
+              type: array
+              items:
+                $ref: '#/components/schemas/ExecutionLog'
+              description: Job execution logs
+            metrics:
+              $ref: '#/components/schemas/JobMetrics'
+
+    TranslationResult:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+          nullable: true
+        content:
+          type: string
+          description: Generated content
+        format:
+          $ref: '#/components/schemas/OutputFormat'
+        metadata:
+          type: object
+          description: Result metadata
+        quality_score:
+          type: number
+          minimum: 0
+          maximum: 1
+          nullable: true
+        tokens_used:
+          type: integer
+          minimum: 0
+        processing_time_ms:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+
+    TranslationResultDetail:
+      allOf:
+        - $ref: '#/components/schemas/TranslationResult'
+        - type: object
+          properties:
+            input_summary:
+              type: object
+              description: Summary of input data
+            prompt_used:
+              type: string
+              description: Actual prompt sent to LLM
+            llm_response:
+              type: object
+              description: Raw LLM response
+            post_processing:
+              type: object
+              description: Post-processing steps applied
+            feedback:
+              type: array
+              items:
+                $ref: '#/components/schemas/ResultFeedback'
+              description: User feedback on this result
+
+    # ========================================================================
+    # REQUEST MODELS
+    # ========================================================================
+    CreateTemplateRequest:
+      type: object
+      required: [name, prompt_template, target_format, llm_provider]
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: Template display name
+        description:
+          type: string
+          nullable: true
+          description: Template description
+        category:
+          type: string
+          maxLength: 100
+          nullable: true
+          description: Template category
+        prompt_template:
+          type: string
+          description: Main prompt template with variables
+        system_prompt:
+          type: string
+          nullable: true
+          description: System prompt for LLM
+        example_input:
+          type: object
+          nullable: true
+          description: Example input data
+        example_output:
+          type: string
+          nullable: true
+          description: Example expected output
+        target_format:
+          $ref: '#/components/schemas/OutputFormat'
+        llm_provider:
+          $ref: '#/components/schemas/LLMProvider'
+        model_version:
+          type: string
+          maxLength: 100
+          nullable: true
+        max_tokens:
+          type: integer
+          minimum: 100
+          maximum: 32000
+          default: 4000
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+          default: 0.7
+        parameters:
+          type: object
+        variables:
+          type: object
+        is_public:
+          type: boolean
+          default: false
+
+    UpdateTemplateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+        category:
+          type: string
+          maxLength: 100
+          nullable: true
+        prompt_template:
+          type: string
+        system_prompt:
+          type: string
+          nullable: true
+        example_input:
+          type: object
+          nullable: true
+        example_output:
+          type: string
+          nullable: true
+        target_format:
+          $ref: '#/components/schemas/OutputFormat'
+        llm_provider:
+          $ref: '#/components/schemas/LLMProvider'
+        model_version:
+          type: string
+          maxLength: 100
+          nullable: true
+        max_tokens:
+          type: integer
+          minimum: 100
+          maximum: 32000
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+        parameters:
+          type: object
+        variables:
+          type: object
+        is_public:
+          type: boolean
+
+    TestTemplateRequest:
+      type: object
+      required: [input_data]
+      properties:
+        input_data:
+          type: object
+          description: Test input data
+        context_data:
+          type: object
+          description: Additional context data
+        override_params:
+          type: object
+          description: Override template parameters for testing
+
+    CloneTemplateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: New template name
+        description:
+          type: string
+          nullable: true
+          description: Description for cloned template
+        modifications:
+          type: object
+          description: Modifications to apply to cloned template
+
+    CreateTranslationJobRequest:
+      type: object
+      required: [project_id, llm_provider, user_prompt, input_data]
+      properties:
+        project_id:
+          type: string
+          format: uuid
+          description: Target project
+        design_file_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Source design file
+        parsed_design_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Parsed design data
+        template_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Template to use
+        job_name:
+          type: string
+          maxLength: 255
+          nullable: true
+          description: Custom job name
+        translation_type:
+          $ref: '#/components/schemas/TranslationType'
+        llm_provider:
+          $ref: '#/components/schemas/LLMProvider'
+        model_version:
+          type: string
+          maxLength: 100
+          nullable: true
+        system_prompt:
+          type: string
+          nullable: true
+        user_prompt:
+          type: string
+          description: User prompt for translation
+        max_tokens:
+          type: integer
+          minimum: 100
+          maximum: 32000
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+        top_p:
+          type: number
+          minimum: 0
+          maximum: 1
+        frequency_penalty:
+          type: number
+          minimum: -2
+          maximum: 2
+        presence_penalty:
+          type: number
+          minimum: -2
+          maximum: 2
+        input_data:
+          type: object
+          description: Design data to translate
+        context_data:
+          type: object
+          description: Additional context data
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 10
+          default: 5
+        callback_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Webhook URL for completion notification
+
+    DirectTranslationRequest:
+      type: object
+      required: [llm_provider, user_prompt, input_data]
+      properties:
+        template_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Template to use
+        llm_provider:
+          $ref: '#/components/schemas/LLMProvider'
+        model_version:
+          type: string
+          maxLength: 100
+          nullable: true
+        system_prompt:
+          type: string
+          nullable: true
+        user_prompt:
+          type: string
+          description: User prompt for translation
+        max_tokens:
+          type: integer
+          minimum: 100
+          maximum: 32000
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+        input_data:
+          type: object
+          description: Design data to translate
+        context_data:
+          type: object
+          description: Additional context data
+        timeout_seconds:
+          type: integer
+          minimum: 10
+          maximum: 300
+          default: 60
+          description: Request timeout
+
+    BatchTranslationRequest:
+      type: object
+      required: [translations]
+      properties:
+        translations:
+          type: array
+          items:
+            $ref: '#/components/schemas/DirectTranslationRequest'
+          minItems: 1
+          maxItems: 50
+          description: Array of translation requests
+        batch_name:
+          type: string
+          maxLength: 255
+          nullable: true
+          description: Custom batch name
+        callback_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Webhook URL for batch completion
+
+    TestProviderRequest:
+      type: object
+      properties:
+        model_version:
+          type: string
+          maxLength: 100
+          nullable: true
+        test_prompt:
+          type: string
+          nullable: true
+          description: Custom test prompt
+
+    ResultFeedbackRequest:
+      type: object
+      required: [rating]
+      properties:
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+          description: Quality rating (1-5)
+        feedback_text:
+          type: string
+          maxLength: 1000
+          nullable: true
+          description: Detailed feedback
+        feedback_type:
+          type: string
+          enum: [quality, accuracy, relevance, format, other]
+          description: Type of feedback
+        suggestions:
+          type: string
+          maxLength: 1000
+          nullable: true
+          description: Improvement suggestions
+
+    # ========================================================================
+    # RESPONSE MODELS
+    # ========================================================================
+    TemplateTestResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        result:
+          $ref: '#/components/schemas/TranslationResult'
+        validation_errors:
+          type: array
+          items:
+            type: string
+        performance_metrics:
+          type: object
+          properties:
+            execution_time_ms:
+              type: integer
+            tokens_used:
+              type: integer
+            cost_estimate_usd:
+              type: number
+
+    BatchTranslationResponse:
+      type: object
+      properties:
+        batch_id:
+          type: string
+          format: uuid
+        total_translations:
+          type: integer
+        estimated_completion_time:
+          type: string
+          format: date-time
+        status_url:
+          type: string
+          format: uri
+        individual_job_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    LLMProviderInfo:
+      type: object
+      properties:
+        provider:
+          $ref: '#/components/schemas/LLMProvider'
+        name:
+          type: string
+        description:
+          type: string
+        available:
+          type: boolean
+        capabilities:
+          type: object
+          properties:
+            max_tokens:
+              type: integer
+            supports_system_prompt:
+              type: boolean
+            supports_streaming:
+              type: boolean
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/LLMModel'
+        pricing:
+          type: object
+          properties:
+            input_token_cost_per_1k:
+              type: number
+            output_token_cost_per_1k:
+              type: number
+
+    LLMModel:
+      type: object
+      properties:
+        model_id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        max_tokens:
+          type: integer
+        context_window:
+          type: integer
+        capabilities:
+          type: array
+          items:
+            type: string
+        recommended_for:
+          type: array
+          items:
+            type: string
+
+    ProviderTestResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        response_time_ms:
+          type: integer
+        model_used:
+          type: string
+        tokens_used:
+          type: integer
+        test_result:
+          type: string
+        error_message:
+          type: string
+          nullable: true
+
+    UsageAnalytics:
+      type: object
+      properties:
+        period:
+          type: object
+          properties:
+            start_date:
+              type: string
+              format: date
+            end_date:
+              type: string
+              format: date
+        total_translations:
+          type: integer
+        successful_translations:
+          type: integer
+        failed_translations:
+          type: integer
+        total_tokens_used:
+          type: integer
+        total_cost_usd:
+          type: number
+        average_processing_time_ms:
+          type: number
+        provider_breakdown:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              count:
+                type: integer
+              tokens:
+                type: integer
+              cost_usd:
+                type: number
+        daily_stats:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              translations:
+                type: integer
+              tokens:
+                type: integer
+              cost_usd:
+                type: number
+
+    QualityMetrics:
+      type: object
+      properties:
+        overall_quality_score:
+          type: number
+          minimum: 0
+          maximum: 1
+        total_feedback_count:
+          type: integer
+        rating_distribution:
+          type: object
+          properties:
+            "1":
+              type: integer
+            "2":
+              type: integer
+            "3":
+              type: integer
+            "4":
+              type: integer
+            "5":
+              type: integer
+        success_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+        average_processing_time:
+          type: number
+        template_performance:
+          type: array
+          items:
+            type: object
+            properties:
+              template_id:
+                type: string
+                format: uuid
+              template_name:
+                type: string
+              usage_count:
+                type: integer
+              average_rating:
+                type: number
+              success_rate:
+                type: number
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        uptime_seconds:
+          type: integer
+
+    ServiceStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        llm_providers:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+                enum: [healthy, unhealthy]
+              response_time_ms:
+                type: number
+              last_check:
+                type: string
+                format: date-time
+        queue_status:
+          type: object
+          properties:
+            pending_jobs:
+              type: integer
+            processing_jobs:
+              type: integer
+            queue_depth:
+              type: integer
+        metrics:
+          type: object
+          properties:
+            translations_per_minute:
+              type: number
+            average_processing_time_ms:
+              type: number
+            memory_usage_mb:
+              type: number
+            cpu_usage_percent:
+              type: number
+
+    # ========================================================================
+    # UTILITY MODELS
+    # ========================================================================
+    PaginatedResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          description: Array of data items
+        pagination:
+          type: object
+          properties:
+            page:
+              type: integer
+              minimum: 1
+            limit:
+              type: integer
+              minimum: 1
+            total:
+              type: integer
+              minimum: 0
+            pages:
+              type: integer
+              minimum: 0
+            has_next:
+              type: boolean
+            has_prev:
+              type: boolean
+
+    # ========================================================================
+    # ENUMS
+    # ========================================================================
+    OutputFormat:
+      type: string
+      enum: [markdown, json, yaml, html, text, xml, custom]
+      description: Supported output formats
+
+    LLMProvider:
+      type: string
+      enum: [openai_gpt4, openai_gpt3_5, anthropic_claude, google_gemini, meta_llama, cohere, mistral, custom]
+      description: Supported LLM providers
+
+    TranslationType:
+      type: string
+      enum: [full, incremental, component, element, custom]
+      description: Types of translation operations
+
+    TemplateStatus:
+      type: string
+      enum: [active, inactive, deprecated, archived]
+      description: Template status
+
+    JobStatus:
+      type: string
+      enum: [pending, queued, processing, completed, failed, cancelled, timeout]
+      description: Job execution status
+
+    # ========================================================================
+    # SUPPORTING MODELS
+    # ========================================================================
+    TemplateUsageStats:
+      type: object
+      properties:
+        total_usage:
+          type: integer
+        successful_runs:
+          type: integer
+        failed_runs:
+          type: integer
+        average_rating:
+          type: number
+        last_used:
+          type: string
+          format: date-time
+        popular_projects:
+          type: array
+          items:
+            type: object
+            properties:
+              project_id:
+                type: string
+                format: uuid
+              project_name:
+                type: string
+              usage_count:
+                type: integer
+
+    TemplateVersion:
+      type: object
+      properties:
+        version:
+          type: integer
+        changes_summary:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+          format: uuid
+
+    ExecutionLog:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        level:
+          type: string
+          enum: [debug, info, warning, error]
+        message:
+          type: string
+        details:
+          type: object
+
+    JobMetrics:
+      type: object
+      properties:
+        queue_time_ms:
+          type: integer
+        processing_time_ms:
+          type: integer
+        total_tokens:
+          type: integer
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+        cost_usd:
+          type: number
+        retries:
+          type: integer
+
+    ResultFeedback:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+        feedback_text:
+          type: string
+        feedback_type:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+          format: uuid
+
+    # ========================================================================
+    # ERROR MODELS
+    # ========================================================================
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Error code for programmatic handling
+            message:
+              type: string
+              description: Human-readable error message
+            details:
+              type: object
+              description: Additional error details
+            request_id:
+              type: string
+              description: Request ID for tracking
+
+    ValidationError:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          properties:
+            error:
+              type: object
+              properties:
+                validation_errors:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      field:
+                        type: string
+                      message:
+                        type: string
+                      value:
+                        description: The invalid value
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid input parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationError'
+
+    Unauthorized:
+      description: Unauthorized - authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Forbidden:
+      description: Forbidden - insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Conflict:
+      description: Conflict - resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    RateLimitExceeded:
+      description: Rate limit exceeded
+      headers:
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+          description: Request limit per time window
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+          description: Remaining requests in current window
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+          description: Time when rate limit resets (Unix timestamp)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+# ============================================================================
+# TAGS
+# ============================================================================
+tags:
+  - name: Health
+    description: Service health and status endpoints
+  - name: Templates
+    description: Translation template management
+  - name: Translation Jobs
+    description: Asynchronous translation job management
+  - name: Direct Translation
+    description: Immediate translation operations
+  - name: LLM Providers
+    description: LLM provider management and testing
+  - name: Results
+    description: Translation result management and feedback
+  - name: Analytics
+    description: Usage analytics and quality metrics
+
+# ============================================================================
+# EXTERNAL DOCS
+# ============================================================================
+externalDocs:
+  description: Imagineer Translation Engine Service Documentation
+  url: https://docs.imagineer.dev/api/translation-engine

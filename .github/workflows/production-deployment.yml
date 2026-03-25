@@ -1,0 +1,614 @@
+# Imagineer Platform Production Deployment Pipeline
+# Comprehensive CI/CD with security gates, testing, and zero-downtime deployment
+
+name: Production Deployment
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deployment_type:
+        description: 'Deployment type'
+        required: true
+        default: 'rolling'
+        type: choice
+        options:
+          - rolling
+          - blue-green
+          - canary
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  NODE_VERSION: '20'
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+  actions: read
+
+jobs:
+  # =============================================================================
+  # SECURITY & QUALITY GATES
+  # =============================================================================
+  
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Run secret scanning
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+
+      - name: Security audit script
+        run: |
+          chmod +x ./infrastructure/security/security-audit.sh
+          ./infrastructure/security/security-audit.sh
+
+  dependency-check:
+    name: Dependency Security Check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package-path: ['.', 'client', 'services/design-parser', 'services/translation-engine', 'services/export-engine', 'services/collaboration-hub']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.package-path }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ matrix.package-path }}
+        run: npm ci
+
+      - name: Run npm audit
+        working-directory: ${{ matrix.package-path }}
+        run: npm audit --audit-level=moderate
+
+      - name: OSSAR Scan
+        uses: github/ossar-action@v1
+        id: ossar
+
+      - name: Upload OSSAR results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.ossar.outputs.sarifFile }}
+
+  # =============================================================================
+  # TESTING PIPELINE
+  # =============================================================================
+  
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [client, design-parser, translation-engine, export-engine, collaboration-hub]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm run test:${{ matrix.service }}:coverage
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage/lcov.info
+          flags: ${{ matrix.service }}
+          name: ${{ matrix.service }}-coverage
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [unit-tests]
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: imagineer_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup test database
+        run: |
+          npm run db:migrate:test
+          npm run db:seed:test
+
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/imagineer_test
+          REDIS_URL: redis://localhost:6379
+
+  e2e-tests:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    needs: [integration-tests]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start test infrastructure
+        run: docker-compose -f docker-compose.test.yml up -d
+
+      - name: Wait for services
+        run: ./wait-for-services.sh
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+
+      - name: Upload E2E artifacts
+        uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: e2e-artifacts
+          path: |
+            client/tests/e2e/screenshots/
+            client/tests/e2e/videos/
+
+      - name: Cleanup
+        if: always()
+        run: docker-compose -f docker-compose.test.yml down -v
+
+  # =============================================================================
+  # BUILD & CONTAINERIZATION
+  # =============================================================================
+  
+  build-images:
+    name: Build Container Images
+    runs-on: ubuntu-latest
+    needs: [security-scan, dependency-check, e2e-tests]
+    if: github.event_name != 'pull_request'
+    strategy:
+      matrix:
+        service: [design-parser, translation-engine, export-engine, collaboration-hub]
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tags: ${{ steps.meta.outputs.tags }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/${{ matrix.service }}
+          file: ./services/${{ matrix.service }}/Dockerfile.production
+          target: production
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            COMMIT_HASH=${{ github.sha }}
+
+      - name: Sign container image
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.2.0'
+
+      - name: Sign the published Docker image
+        env:
+          COSIGN_EXPERIMENTAL: 1
+        run: |
+          cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}@${{ steps.build.outputs.digest }}
+
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    needs: [security-scan, dependency-check]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install dependencies
+        working-directory: client
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: client
+        run: npm run build
+        env:
+          NODE_ENV: production
+          VITE_API_URL: ${{ secrets.PRODUCTION_API_URL }}
+          VITE_WS_URL: ${{ secrets.PRODUCTION_WS_URL }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: frontend-build
+          path: client/dist/
+          retention-days: 30
+
+  # =============================================================================
+  # PERFORMANCE TESTING
+  # =============================================================================
+  
+  performance-tests:
+    name: Performance Testing
+    runs-on: ubuntu-latest
+    needs: [build-images]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup k6
+        run: |
+          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Run performance tests
+        run: k6 run tests/performance/load-tests-production.js
+        env:
+          BASE_URL: ${{ secrets.STAGING_URL }}
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v3
+        with:
+          name: performance-results
+          path: performance-results.json
+
+  # =============================================================================
+  # STAGING DEPLOYMENT
+  # =============================================================================
+  
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build-images, build-frontend, performance-tests]
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: staging
+      url: https://staging.imagineer.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name imagineer-staging
+
+      - name: Deploy to staging
+        run: |
+          helm upgrade --install imagineer-staging ./helm/imagineer \
+            --namespace imagineer-staging \
+            --create-namespace \
+            --values ./helm/values-staging.yaml \
+            --set image.tag=${{ github.sha }} \
+            --set deployment.type=rolling \
+            --wait --timeout=600s
+
+      - name: Run smoke tests
+        run: |
+          kubectl wait --for=condition=ready pod -l app=imagineer --timeout=300s -n imagineer-staging
+          ./scripts/smoke-tests.sh ${{ secrets.STAGING_URL }}
+
+  # =============================================================================
+  # PRODUCTION DEPLOYMENT
+  # =============================================================================
+  
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [deploy-staging]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    environment:
+      name: production
+      url: https://imagineer.com
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name imagineer-production
+
+      - name: Pre-deployment backup
+        run: |
+          kubectl create job --from=cronjob/database-backup backup-pre-deploy-$(date +%Y%m%d-%H%M%S) -n imagineer-prod
+
+      - name: Run database migrations
+        run: |
+          kubectl run migration-job --image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/design-parser:${{ github.sha }} \
+            --rm -i --restart=Never \
+            --command -- npm run db:migrate:prod
+
+      - name: Deploy with blue-green strategy
+        if: ${{ github.event.inputs.deployment_type == 'blue-green' || github.event.inputs.deployment_type == '' }}
+        run: |
+          # Deploy to blue environment
+          helm upgrade --install imagineer-blue ./helm/imagineer \
+            --namespace imagineer-prod \
+            --values ./helm/values-production.yaml \
+            --values ./helm/values-blue.yaml \
+            --set image.tag=${{ github.sha }} \
+            --set deployment.type=blue-green \
+            --wait --timeout=600s
+          
+          # Run health checks on blue environment
+          ./scripts/health-check.sh blue
+          
+          # Switch traffic to blue environment
+          kubectl patch service imagineer-service -n imagineer-prod \
+            -p '{"spec":{"selector":{"deployment":"blue"}}}'
+          
+          # Wait and verify
+          sleep 60
+          ./scripts/smoke-tests.sh https://imagineer.com
+          
+          # Clean up old green deployment
+          helm uninstall imagineer-green -n imagineer-prod || true
+
+      - name: Deploy with rolling update
+        if: ${{ github.event.inputs.deployment_type == 'rolling' }}
+        run: |
+          helm upgrade --install imagineer ./helm/imagineer \
+            --namespace imagineer-prod \
+            --values ./helm/values-production.yaml \
+            --set image.tag=${{ github.sha }} \
+            --set deployment.type=rolling \
+            --wait --timeout=600s
+
+      - name: Deploy with canary strategy
+        if: ${{ github.event.inputs.deployment_type == 'canary' }}
+        run: |
+          # Deploy canary with 10% traffic
+          helm upgrade --install imagineer-canary ./helm/imagineer \
+            --namespace imagineer-prod \
+            --values ./helm/values-production.yaml \
+            --values ./helm/values-canary.yaml \
+            --set image.tag=${{ github.sha }} \
+            --set deployment.type=canary \
+            --set canary.weight=10 \
+            --wait --timeout=600s
+          
+          # Monitor canary metrics for 10 minutes
+          ./scripts/canary-monitor.sh 600
+          
+          # If successful, promote canary to 100%
+          helm upgrade imagineer-canary ./helm/imagineer \
+            --namespace imagineer-prod \
+            --set canary.weight=100 \
+            --wait --timeout=300s
+
+      - name: Post-deployment verification
+        run: |
+          # Wait for all pods to be ready
+          kubectl wait --for=condition=ready pod -l app=imagineer --timeout=300s -n imagineer-prod
+          
+          # Run comprehensive health checks
+          ./scripts/health-check.sh production
+          
+          # Run smoke tests
+          ./scripts/smoke-tests.sh https://imagineer.com
+          
+          # Verify all services are responding
+          ./scripts/service-verification.sh
+
+      - name: Update deployment status
+        run: |
+          # Create deployment record
+          kubectl create configmap deployment-${{ github.sha }} \
+            --from-literal=version=${{ github.ref_name }} \
+            --from-literal=commit=${{ github.sha }} \
+            --from-literal=timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            --from-literal=deployer=${{ github.actor }} \
+            -n imagineer-prod
+
+      - name: Notify deployment success
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          text: |
+            🚀 Production deployment successful!
+            Version: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            Deployer: ${{ github.actor }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # =============================================================================
+  # ROLLBACK CAPABILITY
+  # =============================================================================
+  
+  rollback:
+    name: Rollback Production
+    runs-on: ubuntu-latest
+    if: failure() && github.ref == 'refs/heads/main'
+    needs: [deploy-production]
+    environment:
+      name: production-rollback
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name imagineer-production
+
+      - name: Rollback to previous version
+        run: |
+          # Get previous successful deployment
+          PREVIOUS_RELEASE=$(helm history imagineer -n imagineer-prod --max 5 -o json | jq -r '.[1].revision')
+          
+          # Rollback
+          helm rollback imagineer $PREVIOUS_RELEASE -n imagineer-prod --wait --timeout=300s
+          
+          # Verify rollback
+          kubectl wait --for=condition=ready pod -l app=imagineer --timeout=300s -n imagineer-prod
+          ./scripts/smoke-tests.sh https://imagineer.com
+
+      - name: Notify rollback
+        uses: 8398a7/action-slack@v3
+        with:
+          status: warning
+          text: |
+            ⚠️ Production rollback executed!
+            Previous deployment failed and was rolled back automatically.
+            Please investigate the deployment failure.
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

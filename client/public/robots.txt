@@ -1,0 +1,13 @@
+User-agent: *
+Allow: /
+
+# Sitemap location
+Sitemap: https://imagineer.app/sitemap.xml
+
+# Disallow access to API endpoints
+Disallow: /api/
+Disallow: /admin/
+
+# Allow search engines to index images
+Allow: /assets/images/
+Allow: /assets/illustrations/

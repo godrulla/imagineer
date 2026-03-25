@@ -1,0 +1,30 @@
+# Simplified Docker Compose for Quick Start
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: imagineer-postgres
+    environment:
+      POSTGRES_DB: imagineer
+      POSTGRES_USER: imagineer_user
+      POSTGRES_PASSWORD: imagineer_secure_2024
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: imagineer-redis
+    command: redis-server --requirepass redis_secure_2024
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

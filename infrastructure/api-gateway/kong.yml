@@ -1,0 +1,321 @@
+# Kong API Gateway Configuration for Imagineer Platform
+# This configuration sets up routing, authentication, and rate limiting
+
+_format_version: "3.0"
+_transform: true
+
+services:
+  # Design Parser Service
+  - name: design-parser
+    url: http://design-parser:8001
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 100
+          policy: redis
+          redis_host: redis
+          redis_port: 6379
+      - name: prometheus
+        config:
+          per_consumer: true
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-Service-Name:design-parser"
+              - "X-Request-ID:$(uuid())"
+    routes:
+      - name: parser-routes
+        paths:
+          - /api/v1/parser
+        methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+        strip_path: false
+
+  # Translation Engine Service
+  - name: translation-engine
+    url: http://translation-engine:8002
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 50
+          policy: redis
+          redis_host: redis
+          redis_port: 6379
+      - name: prometheus
+        config:
+          per_consumer: true
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-Service-Name:translation-engine"
+              - "X-Request-ID:$(uuid())"
+    routes:
+      - name: translation-routes
+        paths:
+          - /api/v1/translate
+        methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+        strip_path: false
+
+  # Export Engine Service
+  - name: export-engine
+    url: http://export-engine:8003
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 100
+          policy: redis
+          redis_host: redis
+          redis_port: 6379
+      - name: prometheus
+        config:
+          per_consumer: true
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-Service-Name:export-engine"
+              - "X-Request-ID:$(uuid())"
+    routes:
+      - name: export-routes
+        paths:
+          - /api/v1/export
+        methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+        strip_path: false
+
+  # Collaboration Hub Service
+  - name: collaboration-hub
+    url: http://collaboration-hub:8004
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 200
+          policy: redis
+          redis_host: redis
+          redis_port: 6379
+      - name: prometheus
+        config:
+          per_consumer: true
+      - name: request-transformer
+        config:
+          add:
+            headers:
+              - "X-Service-Name:collaboration-hub"
+              - "X-Request-ID:$(uuid())"
+    routes:
+      - name: collaboration-routes
+        paths:
+          - /api/v1/collaboration
+        methods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+        strip_path: false
+      - name: websocket-routes
+        paths:
+          - /socket.io
+        protocols:
+          - http
+          - https
+          - ws
+          - wss
+        strip_path: false
+
+# Global Plugins
+plugins:
+  # CORS Configuration
+  - name: cors
+    config:
+      origins:
+        - "https://app.imagineer.dev"
+        - "https://staging.imagineer.dev"
+        - "http://localhost:5173"
+        - "http://localhost:3000"
+      methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - PATCH
+        - OPTIONS
+      headers:
+        - Accept
+        - Accept-Version
+        - Authorization
+        - Content-Length
+        - Content-MD5
+        - Content-Type
+        - Date
+        - X-Auth-Token
+        - X-Requested-With
+      exposed_headers:
+        - X-Auth-Token
+        - X-Request-ID
+        - X-Response-Time
+      credentials: true
+      max_age: 3600
+
+  # Security Headers
+  - name: response-transformer
+    config:
+      add:
+        headers:
+          - "X-Content-Type-Options:nosniff"
+          - "X-Frame-Options:DENY"
+          - "X-XSS-Protection:1; mode=block"
+          - "Strict-Transport-Security:max-age=31536000; includeSubDomains"
+          - "Referrer-Policy:strict-origin-when-cross-origin"
+          - "Content-Security-Policy:default-src 'self'"
+
+  # Request ID for tracing
+  - name: correlation-id
+    config:
+      header_name: X-Request-ID
+      generator: uuid
+
+  # Logging
+  - name: http-log
+    config:
+      http_endpoint: http://log-collector:8080/logs
+      method: POST
+      timeout: 1000
+      keepalive: 1000
+
+  # Health Check
+  - name: request-termination
+    route: health-check
+    config:
+      status_code: 200
+      content_type: application/json
+      body: '{"status":"healthy","service":"api-gateway","timestamp":"$(date)"}'
+
+# Consumer for API Key Authentication
+consumers:
+  - username: imagineer-client
+    custom_id: client-web
+    keyauth_credentials:
+      - key: imagineer-client-key-2024
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 1000
+          hour: 10000
+
+# Routes for health checks and static content
+routes:
+  - name: health-check
+    paths:
+      - /health
+      - /api/health
+    methods:
+      - GET
+    plugins:
+      - name: request-termination
+        config:
+          status_code: 200
+          content_type: application/json
+          body: '{"status":"healthy","service":"api-gateway","timestamp":"2024-01-09T12:00:00Z"}'
+
+  - name: api-docs
+    paths:
+      - /docs
+      - /api/docs
+    methods:
+      - GET
+    plugins:
+      - name: request-termination
+        config:
+          status_code: 200
+          content_type: application/json
+          body: '{"message":"Imagineer API Documentation","version":"1.0.0","endpoints":["/api/v1/parser","/api/v1/translate","/api/v1/export","/api/v1/collaboration"]}'
+
+# Upstream load balancing configurations
+upstreams:
+  - name: design-parser-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        type: http
+        http_path: /health
+        healthy:
+          interval: 30
+          successes: 2
+        unhealthy:
+          interval: 30
+          http_failures: 3
+      passive:
+        unhealthy:
+          http_failures: 5
+    targets:
+      - target: design-parser:8001
+        weight: 100
+
+  - name: translation-engine-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        type: http
+        http_path: /health
+        healthy:
+          interval: 30
+          successes: 2
+        unhealthy:
+          interval: 30
+          http_failures: 3
+      passive:
+        unhealthy:
+          http_failures: 5
+    targets:
+      - target: translation-engine:8002
+        weight: 100
+
+  - name: export-engine-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        type: http
+        http_path: /health
+        healthy:
+          interval: 30
+          successes: 2
+        unhealthy:
+          interval: 30
+          http_failures: 3
+      passive:
+        unhealthy:
+          http_failures: 5
+    targets:
+      - target: export-engine:8003
+        weight: 100
+
+  - name: collaboration-hub-upstream
+    algorithm: least-connections
+    healthchecks:
+      active:
+        type: http
+        http_path: /health
+        healthy:
+          interval: 30
+          successes: 2
+        unhealthy:
+          interval: 30
+          http_failures: 3
+      passive:
+        unhealthy:
+          http_failures: 5
+    targets:
+      - target: collaboration-hub:8004
+        weight: 100

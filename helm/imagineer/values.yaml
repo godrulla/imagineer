@@ -1,0 +1,452 @@
+# Default values for Imagineer Platform
+# This is a YAML-formatted file.
+
+# =============================================================================
+# GLOBAL CONFIGURATION
+# =============================================================================
+
+global:
+  # Image registry and repository
+  imageRegistry: ghcr.io
+  imageRepository: imagineer
+  imageTag: latest
+  imagePullPolicy: IfNotPresent
+  
+  # Environment
+  environment: production
+  
+  # Storage class for persistent volumes
+  storageClass: "gp3"
+  
+  # Security context
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1001
+    runAsGroup: 1001
+    fsGroup: 1001
+
+# =============================================================================
+# APPLICATION SERVICES
+# =============================================================================
+
+services:
+  # Design Parser Service
+  designParser:
+    enabled: true
+    name: design-parser
+    image:
+      repository: design-parser
+      tag: latest
+    replicas: 3
+    port: 8001
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "300m"
+      limits:
+        memory: "1.5Gi"
+        cpu: "1000m"
+    env:
+      LOG_LEVEL: "warn"
+      NODE_OPTIONS: "--max-old-space-size=1024"
+    healthCheck:
+      path: /health
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+  # Translation Engine Service
+  translationEngine:
+    enabled: true
+    name: translation-engine
+    image:
+      repository: translation-engine
+      tag: latest
+    replicas: 2
+    port: 8002
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+      limits:
+        memory: "2.5Gi"
+        cpu: "1500m"
+    env:
+      LOG_LEVEL: "warn"
+      NODE_OPTIONS: "--max-old-space-size=2048"
+      UV_THREADPOOL_SIZE: "128"
+    healthCheck:
+      path: /health
+      initialDelaySeconds: 60
+      periodSeconds: 15
+      timeoutSeconds: 10
+      failureThreshold: 3
+
+  # Export Engine Service
+  exportEngine:
+    enabled: true
+    name: export-engine
+    image:
+      repository: export-engine
+      tag: latest
+    replicas: 3
+    port: 8003
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "300m"
+      limits:
+        memory: "1.5Gi"
+        cpu: "1000m"
+    env:
+      LOG_LEVEL: "warn"
+      NODE_OPTIONS: "--max-old-space-size=1024"
+    healthCheck:
+      path: /health
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+  # Collaboration Hub Service
+  collaborationHub:
+    enabled: true
+    name: collaboration-hub
+    image:
+      repository: collaboration-hub
+      tag: latest
+    replicas: 2
+    port: 8004
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "300m"
+      limits:
+        memory: "1.5Gi"
+        cpu: "1000m"
+    env:
+      LOG_LEVEL: "warn"
+      NODE_OPTIONS: "--max-old-space-size=1024"
+      UV_THREADPOOL_SIZE: "128"
+    healthCheck:
+      path: /health
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+# =============================================================================
+# INFRASTRUCTURE SERVICES
+# =============================================================================
+
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "" # Set via secret
+    username: imagineer_user
+    password: "" # Set via secret
+    database: imagineer
+  primary:
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"
+    persistence:
+      enabled: true
+      size: 100Gi
+      storageClass: "gp3"
+    configuration: |
+      # Production PostgreSQL configuration
+      max_connections = 200
+      shared_buffers = 256MB
+      effective_cache_size = 1GB
+      work_mem = 4MB
+      maintenance_work_mem = 64MB
+      wal_buffers = 16MB
+      checkpoint_completion_target = 0.9
+      random_page_cost = 1.1
+      effective_io_concurrency = 200
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+redis:
+  enabled: true
+  auth:
+    enabled: true
+    password: "" # Set via secret
+  master:
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "200m"
+      limits:
+        memory: "768Mi"
+        cpu: "500m"
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: "gp3"
+    configuration: |
+      # Production Redis configuration
+      maxmemory 512mb
+      maxmemory-policy allkeys-lru
+      save 900 1
+      save 300 10
+      save 60 10000
+      appendonly yes
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+# =============================================================================
+# MONITORING STACK
+# =============================================================================
+
+prometheus:
+  enabled: true
+  server:
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "300m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+    persistentVolume:
+      enabled: true
+      size: 50Gi
+      storageClass: "gp3"
+    retention: "30d"
+    retentionSize: "20GB"
+
+grafana:
+  enabled: true
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "512Mi"
+      cpu: "300m"
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: "gp3"
+  adminPassword: "" # Set via secret
+  sidecar:
+    dashboards:
+      enabled: true
+      searchNamespace: ALL
+    datasources:
+      enabled: true
+      searchNamespace: ALL
+
+jaeger:
+  enabled: true
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "512Mi"
+      cpu: "300m"
+
+# =============================================================================
+# NETWORKING
+# =============================================================================
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/rate-limit: "1000"
+    nginx.ingress.kubernetes.io/rate-limit-rps: "10"
+  hosts:
+    - host: imagineer.com
+      paths:
+        - path: /
+          pathType: Prefix
+          service: nginx
+          port: 80
+        - path: /api/v1/parser
+          pathType: Prefix
+          service: design-parser
+          port: 8001
+        - path: /api/v1/translation
+          pathType: Prefix
+          service: translation-engine
+          port: 8002
+        - path: /api/v1/export
+          pathType: Prefix
+          service: export-engine
+          port: 8003
+        - path: /api/v1/collaboration
+          pathType: Prefix
+          service: collaboration-hub
+          port: 8004
+        - path: /ws/collaboration
+          pathType: Prefix
+          service: collaboration-hub
+          port: 8004
+  tls:
+    - secretName: imagineer-tls
+      hosts:
+        - imagineer.com
+
+# Nginx for static content serving
+nginx:
+  enabled: true
+  image:
+    repository: nginx
+    tag: alpine
+  replicas: 2
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+
+# =============================================================================
+# SECURITY
+# =============================================================================
+
+networkPolicies:
+  enabled: true
+
+podSecurityPolicies:
+  enabled: true
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  name: imagineer-app
+  annotations: {}
+
+secrets:
+  # External secrets operator integration
+  externalSecrets:
+    enabled: true
+    backendType: vault
+    vaultRole: imagineer-services
+    secretStore: vault-backend
+  
+  # Manual secret creation (if external secrets disabled)
+  create: false
+
+# =============================================================================
+# AUTOSCALING
+# =============================================================================
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Pod Disruption Budgets
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# =============================================================================
+# PERSISTENCE
+# =============================================================================
+
+persistence:
+  # Shared storage for exports and assets
+  exports:
+    enabled: true
+    size: 100Gi
+    storageClass: "efs"
+    accessMode: ReadWriteMany
+  
+  # Temporary storage
+  temp:
+    enabled: true
+    size: 50Gi
+    storageClass: "gp3"
+    accessMode: ReadWriteOnce
+
+# =============================================================================
+# BACKUP
+# =============================================================================
+
+backup:
+  enabled: true
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention: "30d"
+  s3:
+    bucket: imagineer-backups-prod
+    region: us-east-1
+
+# =============================================================================
+# DEPLOYMENT STRATEGY
+# =============================================================================
+
+deployment:
+  type: rolling  # rolling, blue-green, canary
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+# Blue-Green deployment configuration
+blueGreen:
+  enabled: false
+  prePromotionAnalysis:
+    templates:
+      - templateName: success-rate
+      - templateName: latency
+
+# Canary deployment configuration
+canary:
+  enabled: false
+  steps:
+    - setWeight: 10
+    - pause: {duration: 5m}
+    - setWeight: 25
+    - pause: {duration: 5m}
+    - setWeight: 50
+    - pause: {duration: 5m}
+    - setWeight: 75
+    - pause: {duration: 5m}
+
+# =============================================================================
+# ENVIRONMENT OVERRIDES
+# =============================================================================
+
+nameOverride: ""
+fullnameOverride: ""
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - imagineer
+          topologyKey: kubernetes.io/hostname

@@ -1,0 +1,343 @@
+# Imagineer Platform Alerting Rules
+# Comprehensive monitoring alerts for production environment
+
+groups:
+  # =============================================================================
+  # APPLICATION HEALTH ALERTS
+  # =============================================================================
+  
+  - name: imagineer.application.health
+    interval: 30s
+    rules:
+      - alert: ServiceDown
+        expr: up{job=~"design-parser|translation-engine|export-engine|collaboration-hub"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          category: availability
+        annotations:
+          summary: "{{ $labels.job }} service is down"
+          description: "{{ $labels.job }} has been down for more than 2 minutes. Instance: {{ $labels.instance }}"
+          runbook_url: "https://runbooks.imagineer.com/service-down"
+
+      - alert: HealthCheckFailing
+        expr: probe_success{job="blackbox-http"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          category: availability
+        annotations:
+          summary: "Health check failing for {{ $labels.instance }}"
+          description: "Health check has been failing for {{ $labels.instance }} for more than 1 minute"
+          runbook_url: "https://runbooks.imagineer.com/health-check-failure"
+
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: "High error rate on {{ $labels.job }}"
+          description: "Error rate is {{ $value | humanizePercentage }} on {{ $labels.job }}"
+          runbook_url: "https://runbooks.imagineer.com/high-error-rate"
+
+      - alert: CriticalErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.25
+        for: 2m
+        labels:
+          severity: critical
+          category: performance
+        annotations:
+          summary: "Critical error rate on {{ $labels.job }}"
+          description: "Error rate is {{ $value | humanizePercentage }} on {{ $labels.job }}"
+          runbook_url: "https://runbooks.imagineer.com/critical-error-rate"
+
+  # =============================================================================
+  # PERFORMANCE ALERTS
+  # =============================================================================
+  
+  - name: imagineer.performance
+    interval: 30s
+    rules:
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: "High response time on {{ $labels.job }}"
+          description: "95th percentile response time is {{ $value }}s on {{ $labels.job }}"
+
+      - alert: CriticalResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 5
+        for: 2m
+        labels:
+          severity: critical
+          category: performance
+        annotations:
+          summary: "Critical response time on {{ $labels.job }}"
+          description: "95th percentile response time is {{ $value }}s on {{ $labels.job }}"
+
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total[5m]) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          category: resources
+        annotations:
+          summary: "High CPU usage on {{ $labels.job }}"
+          description: "CPU usage is {{ $value | humanizePercentage }} on {{ $labels.job }}"
+
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes / 1024 / 1024 / 1024 > 1.5
+        for: 10m
+        labels:
+          severity: warning
+          category: resources
+        annotations:
+          summary: "High memory usage on {{ $labels.job }}"
+          description: "Memory usage is {{ $value }}GB on {{ $labels.job }}"
+
+  # =============================================================================
+  # DATABASE ALERTS
+  # =============================================================================
+  
+  - name: imagineer.database
+    interval: 30s
+    rules:
+      - alert: PostgreSQLDown
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          category: infrastructure
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL has been down for more than 1 minute"
+          runbook_url: "https://runbooks.imagineer.com/postgresql-down"
+
+      - alert: HighConnectionCount
+        expr: pg_stat_activity_count > 150
+        for: 5m
+        labels:
+          severity: warning
+          category: database
+        annotations:
+          summary: "High PostgreSQL connection count"
+          description: "Connection count is {{ $value }} (threshold: 150)"
+
+      - alert: LongRunningQueries
+        expr: pg_stat_activity_max_tx_duration > 300
+        for: 5m
+        labels:
+          severity: warning
+          category: database
+        annotations:
+          summary: "Long running PostgreSQL queries"
+          description: "Longest running query is {{ $value }}s"
+
+      - alert: DatabaseDiskSpaceHigh
+        expr: pg_database_size_bytes / 1024 / 1024 / 1024 > 80
+        for: 5m
+        labels:
+          severity: warning
+          category: storage
+        annotations:
+          summary: "Database disk space is high"
+          description: "Database size is {{ $value }}GB"
+
+  # =============================================================================
+  # REDIS ALERTS
+  # =============================================================================
+  
+  - name: imagineer.redis
+    interval: 30s
+    rules:
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+          category: infrastructure
+        annotations:
+          summary: "Redis is down"
+          description: "Redis has been down for more than 1 minute"
+          runbook_url: "https://runbooks.imagineer.com/redis-down"
+
+      - alert: RedisHighMemoryUsage
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          category: memory
+        annotations:
+          summary: "Redis high memory usage"
+          description: "Redis memory usage is {{ $value | humanizePercentage }}"
+
+      - alert: RedisHighConnections
+        expr: redis_connected_clients > 1000
+        for: 5m
+        labels:
+          severity: warning
+          category: connections
+        annotations:
+          summary: "Redis high connection count"
+          description: "Redis has {{ $value }} connected clients"
+
+  # =============================================================================
+  # AI/LLM SERVICE ALERTS
+  # =============================================================================
+  
+  - name: imagineer.ai.services
+    interval: 60s
+    rules:
+      - alert: LLMAPIRateLimitHit
+        expr: rate(llm_api_rate_limit_exceeded_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+          category: external_api
+        annotations:
+          summary: "LLM API rate limit exceeded"
+          description: "{{ $labels.provider }} API rate limit exceeded {{ $value }} times/sec"
+
+      - alert: LLMAPIHighLatency
+        expr: histogram_quantile(0.95, rate(llm_api_request_duration_seconds_bucket[5m])) > 30
+        for: 5m
+        labels:
+          severity: warning
+          category: external_api
+        annotations:
+          summary: "High LLM API latency"
+          description: "95th percentile LLM API latency is {{ $value }}s for {{ $labels.provider }}"
+
+      - alert: TranslationJobBacklog
+        expr: translation_jobs_queued > 100
+        for: 10m
+        labels:
+          severity: warning
+          category: processing
+        annotations:
+          summary: "Translation job backlog building up"
+          description: "{{ $value }} translation jobs are queued"
+
+  # =============================================================================
+  # EXPORT ENGINE ALERTS
+  # =============================================================================
+  
+  - name: imagineer.export.engine
+    interval: 60s
+    rules:
+      - alert: ExportJobFailureRate
+        expr: rate(export_jobs_failed_total[10m]) / rate(export_jobs_total[10m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          category: processing
+        annotations:
+          summary: "High export job failure rate"
+          description: "Export job failure rate is {{ $value | humanizePercentage }}"
+
+      - alert: ExportStorageFull
+        expr: export_storage_usage_bytes / export_storage_capacity_bytes > 0.9
+        for: 5m
+        labels:
+          severity: critical
+          category: storage
+        annotations:
+          summary: "Export storage nearly full"
+          description: "Export storage is {{ $value | humanizePercentage }} full"
+
+  # =============================================================================
+  # COLLABORATION ALERTS
+  # =============================================================================
+  
+  - name: imagineer.collaboration
+    interval: 30s
+    rules:
+      - alert: HighWebSocketConnections
+        expr: websocket_connections_active > 1000
+        for: 5m
+        labels:
+          severity: warning
+          category: connections
+        annotations:
+          summary: "High WebSocket connection count"
+          description: "{{ $value }} active WebSocket connections"
+
+      - alert: WebSocketConnectionFailures
+        expr: rate(websocket_connection_failures_total[5m]) > 1
+        for: 2m
+        labels:
+          severity: warning
+          category: connections
+        annotations:
+          summary: "WebSocket connection failures"
+          description: "{{ $value }} WebSocket connection failures per second"
+
+  # =============================================================================
+  # SECURITY ALERTS
+  # =============================================================================
+  
+  - name: imagineer.security
+    interval: 30s
+    rules:
+      - alert: HighUnauthorizedRequests
+        expr: rate(http_requests_total{status="401"}[5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+          category: security
+        annotations:
+          summary: "High rate of unauthorized requests"
+          description: "{{ $value }} unauthorized requests per second on {{ $labels.job }}"
+
+      - alert: PotentialDDoSAttack
+        expr: rate(http_requests_total[1m]) > 1000
+        for: 1m
+        labels:
+          severity: critical
+          category: security
+        annotations:
+          summary: "Potential DDoS attack detected"
+          description: "{{ $value }} requests per second on {{ $labels.job }}"
+          runbook_url: "https://runbooks.imagineer.com/ddos-response"
+
+      - alert: TLSCertificateExpiringSoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 86400 * 7
+        for: 1h
+        labels:
+          severity: warning
+          category: security
+        annotations:
+          summary: "TLS certificate expiring soon"
+          description: "TLS certificate for {{ $labels.instance }} expires in {{ $value | humanizeDuration }}"
+
+  # =============================================================================
+  # BUSINESS METRICS ALERTS
+  # =============================================================================
+  
+  - name: imagineer.business
+    interval: 60s
+    rules:
+      - alert: LowUserActivity
+        expr: rate(user_actions_total[1h]) < 10
+        for: 30m
+        labels:
+          severity: info
+          category: business
+        annotations:
+          summary: "Low user activity detected"
+          description: "User activity rate is {{ $value }} actions per hour"
+
+      - alert: HighDesignImportFailures
+        expr: rate(design_import_failures_total[10m]) / rate(design_import_attempts_total[10m]) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          category: business
+        annotations:
+          summary: "High design import failure rate"
+          description: "Design import failure rate is {{ $value | humanizePercentage }}"

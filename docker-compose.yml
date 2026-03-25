@@ -1,0 +1,392 @@
+# Docker Compose for Imagineer Platform - Microservices Architecture
+# This configuration sets up the complete microservices ecosystem
+
+services:
+  # ============================================================================
+  # INFRASTRUCTURE SERVICES
+  # ============================================================================
+  
+  # PostgreSQL Primary Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: imagineer-postgres
+    environment:
+      POSTGRES_DB: imagineer
+      POSTGRES_USER: imagineer_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-imagineer_secure_2024}
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./database/migrations:/docker-entrypoint-initdb.d/migrations:ro
+    ports:
+      - "5433:5432"
+    networks:
+      - imagineer-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U imagineer_user -d imagineer"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Redis Cache and Session Store
+  redis:
+    image: redis:7-alpine
+    container_name: imagineer-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_secure_2024}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6380:6379"
+    networks:
+      - imagineer-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # Vector Database (Weaviate for embeddings)
+  weaviate:
+    image: semitechnologies/weaviate:1.22.4
+    container_name: imagineer-weaviate
+    ports:
+      - "8080:8080"
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'false'
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+      DEFAULT_VECTORIZER_MODULE: 'none'
+      CLUSTER_HOSTNAME: 'node1'
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    networks:
+      - imagineer-network
+    restart: unless-stopped
+
+  # ============================================================================
+  # MICROSERVICES
+  # ============================================================================
+
+  # Design Parser Service
+  design-parser:
+    build: 
+      context: ./services/design-parser
+      dockerfile: Dockerfile
+    container_name: imagineer-design-parser
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 8001
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: imagineer
+      DB_USER: imagineer_user
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-imagineer_secure_2024}
+      REDIS_URL: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_2024}
+      FIGMA_ACCESS_TOKEN: ${FIGMA_ACCESS_TOKEN:-}
+      LOG_LEVEL: info
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - imagineer-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Translation Engine Service
+  translation-engine:
+    build:
+      context: ./services/translation-engine
+      dockerfile: Dockerfile
+    container_name: imagineer-translation-engine
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 8002
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: imagineer
+      DB_USER: imagineer_user
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-imagineer_secure_2024}
+      REDIS_URL: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_2024}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      LOG_LEVEL: info
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - imagineer-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Export Engine Service
+  export-engine:
+    build:
+      context: ./services/export-engine
+      dockerfile: Dockerfile
+    container_name: imagineer-export-engine
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 8003
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: imagineer
+      DB_USER: imagineer_user
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-imagineer_secure_2024}
+      REDIS_URL: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_2024}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-imagineer-exports}
+      LOG_LEVEL: info
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - imagineer-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Collaboration Hub Service
+  collaboration-hub:
+    build:
+      context: ./services/collaboration-hub
+      dockerfile: Dockerfile
+    container_name: imagineer-collaboration-hub
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 8004
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: imagineer
+      DB_USER: imagineer_user
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-imagineer_secure_2024}
+      REDIS_URL: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_2024}
+      JWT_SECRET: ${JWT_SECRET:-imagineer_jwt_secret_2024_very_secure}
+      LOG_LEVEL: info
+    ports:
+      - "8004:8004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - imagineer-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ============================================================================
+  # API GATEWAY & LOAD BALANCER
+  # ============================================================================
+
+  # Kong API Gateway
+  kong:
+    image: kong:3.4
+    container_name: imagineer-kong
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_PROXY_LISTEN: 0.0.0.0:8000
+    volumes:
+      - ./infrastructure/api-gateway/kong.yml:/kong/kong.yml:ro
+    ports:
+      - "8090:8000"  # Proxy port
+      - "8091:8001"  # Admin API port
+    depends_on:
+      - design-parser
+      - translation-engine
+      - export-engine
+      - collaboration-hub
+    networks:
+      - imagineer-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  # ============================================================================
+  # MONITORING & OBSERVABILITY
+  # ============================================================================
+
+  # Prometheus Metrics Collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: imagineer-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - imagineer-network
+    restart: unless-stopped
+
+  # Grafana Dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: imagineer-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-grafana_secure_2024}
+      GF_USERS_ALLOW_SIGN_UP: false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - imagineer-network
+    restart: unless-stopped
+
+  # Jaeger Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: imagineer-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: true
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # Jaeger collector
+    networks:
+      - imagineer-network
+    restart: unless-stopped
+
+  # ============================================================================
+  # DEVELOPMENT TOOLS
+  # ============================================================================
+
+  # pgAdmin for database management
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: imagineer-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@imagineer.dev
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-pgadmin_secure_2024}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - imagineer-network
+    restart: unless-stopped
+
+  # Redis Commander for cache management
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: imagineer-redis-commander
+    environment:
+      REDIS_HOSTS: local:redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-redis_secure_2024}
+    ports:
+      - "8081:8081"
+    depends_on:
+      - redis
+    networks:
+      - imagineer-network
+    restart: unless-stopped
+
+  # Nginx for static file serving (development)
+  nginx:
+    image: nginx:alpine
+    container_name: imagineer-nginx
+    volumes:
+      - ./client/dist:/usr/share/nginx/html:ro
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - kong
+    networks:
+      - imagineer-network
+    restart: unless-stopped
+
+# ============================================================================
+# VOLUMES
+# ============================================================================
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  weaviate_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+# ============================================================================
+# NETWORKS
+# ============================================================================
+
+networks:
+  imagineer-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16

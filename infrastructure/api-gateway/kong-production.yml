@@ -1,0 +1,485 @@
+# Kong API Gateway Production Configuration for Imagineer Platform
+# Features: Rate limiting, security headers, authentication, monitoring
+
+_format_version: "3.0"
+_transform: true
+
+# =============================================================================
+# SERVICES CONFIGURATION
+# =============================================================================
+
+services:
+  # Design Parser Service
+  - name: design-parser-service
+    url: http://design-parser:8001
+    protocol: http
+    host: design-parser
+    port: 8001
+    path: /
+    connect_timeout: 60000
+    write_timeout: 60000
+    read_timeout: 60000
+    retries: 5
+    tags:
+      - imagineer
+      - microservice
+      - design-parser
+
+  # Translation Engine Service
+  - name: translation-engine-service
+    url: http://translation-engine:8002
+    protocol: http
+    host: translation-engine
+    port: 8002
+    path: /
+    connect_timeout: 120000  # Higher timeout for AI operations
+    write_timeout: 120000
+    read_timeout: 120000
+    retries: 3
+    tags:
+      - imagineer
+      - microservice
+      - translation-engine
+
+  # Export Engine Service
+  - name: export-engine-service
+    url: http://export-engine:8003
+    protocol: http
+    host: export-engine
+    port: 8003
+    path: /
+    connect_timeout: 60000
+    write_timeout: 60000
+    read_timeout: 60000
+    retries: 5
+    tags:
+      - imagineer
+      - microservice
+      - export-engine
+
+  # Collaboration Hub Service
+  - name: collaboration-hub-service
+    url: http://collaboration-hub:8004
+    protocol: http
+    host: collaboration-hub
+    port: 8004
+    path: /
+    connect_timeout: 60000
+    write_timeout: 60000
+    read_timeout: 60000
+    retries: 5
+    tags:
+      - imagineer
+      - microservice
+      - collaboration-hub
+
+# =============================================================================
+# ROUTES CONFIGURATION
+# =============================================================================
+
+routes:
+  # Design Parser Routes
+  - name: design-parser-api
+    service: design-parser-service
+    protocols:
+      - http
+      - https
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+    paths:
+      - /api/v1/parser
+    strip_path: false
+    preserve_host: false
+    tags:
+      - api
+      - design-parser
+
+  # Translation Engine Routes
+  - name: translation-engine-api
+    service: translation-engine-service
+    protocols:
+      - http
+      - https
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+    paths:
+      - /api/v1/translation
+    strip_path: false
+    preserve_host: false
+    tags:
+      - api
+      - translation-engine
+
+  # Export Engine Routes
+  - name: export-engine-api
+    service: export-engine-service
+    protocols:
+      - http
+      - https
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+    paths:
+      - /api/v1/export
+    strip_path: false
+    preserve_host: false
+    tags:
+      - api
+      - export-engine
+
+  # Collaboration Hub Routes
+  - name: collaboration-hub-api
+    service: collaboration-hub-service
+    protocols:
+      - http
+      - https
+    methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+    paths:
+      - /api/v1/collaboration
+    strip_path: false
+    preserve_host: false
+    tags:
+      - api
+      - collaboration-hub
+
+  # WebSocket Routes for Real-time Collaboration
+  - name: websocket-collaboration
+    service: collaboration-hub-service
+    protocols:
+      - ws
+      - wss
+    paths:
+      - /ws/collaboration
+    strip_path: false
+    preserve_host: false
+    tags:
+      - websocket
+      - collaboration
+
+  # Health Check Routes
+  - name: health-checks
+    service: design-parser-service
+    protocols:
+      - http
+      - https
+    methods:
+      - GET
+    paths:
+      - /health
+      - /api/health
+    strip_path: true
+    preserve_host: false
+    tags:
+      - health
+      - monitoring
+
+# =============================================================================
+# CONSUMERS (API KEY AUTHENTICATION)
+# =============================================================================
+
+consumers:
+  - username: imagineer-frontend
+    custom_id: frontend-client
+    tags:
+      - frontend
+      - web-client
+
+  - username: imagineer-mobile
+    custom_id: mobile-client
+    tags:
+      - mobile
+      - mobile-client
+
+  - username: imagineer-admin
+    custom_id: admin-client
+    tags:
+      - admin
+      - management
+
+# =============================================================================
+# PLUGINS CONFIGURATION
+# =============================================================================
+
+plugins:
+  # Global Rate Limiting
+  - name: rate-limiting
+    config:
+      minute: 1000
+      hour: 10000
+      day: 100000
+      policy: redis
+      redis_host: redis
+      redis_port: 6379
+      redis_password: "${REDIS_PASSWORD}"
+      hide_client_headers: false
+      fault_tolerant: true
+    tags:
+      - security
+      - rate-limiting
+
+  # Global CORS
+  - name: cors
+    config:
+      origins:
+        - "https://imagineer.com"
+        - "https://www.imagineer.com"
+        - "https://app.imagineer.com"
+      methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+        - HEAD
+      headers:
+        - Accept
+        - Accept-Version
+        - Content-Length
+        - Content-MD5
+        - Content-Type
+        - Date
+        - Authorization
+        - X-Auth-Token
+        - X-API-Key
+      exposed_headers:
+        - X-Auth-Token
+        - X-Request-ID
+      credentials: true
+      max_age: 3600
+      preflight_continue: false
+    tags:
+      - security
+      - cors
+
+  # Security Headers
+  - name: response-transformer
+    config:
+      add:
+        headers:
+          - "X-Frame-Options:DENY"
+          - "X-Content-Type-Options:nosniff"
+          - "X-XSS-Protection:1; mode=block"
+          - "Strict-Transport-Security:max-age=31536000; includeSubDomains"
+          - "Content-Security-Policy:default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+          - "Referrer-Policy:strict-origin-when-cross-origin"
+          - "Permissions-Policy:geolocation=(), microphone=(), camera=()"
+    tags:
+      - security
+      - headers
+
+  # Request/Response Logging
+  - name: file-log
+    config:
+      path: /dev/stdout
+      reopen: true
+    tags:
+      - logging
+      - monitoring
+
+  # Prometheus Metrics
+  - name: prometheus
+    config:
+      per_consumer: true
+      status_code_metrics: true
+      latency_metrics: true
+      bandwidth_metrics: true
+      upstream_health_metrics: true
+    tags:
+      - monitoring
+      - metrics
+
+  # Request Size Limiting
+  - name: request-size-limiting
+    config:
+      allowed_payload_size: 50
+      size_unit: megabytes
+      require_content_length: false
+    tags:
+      - security
+      - size-limiting
+
+  # IP Restriction (Optional - configure based on requirements)
+  # - name: ip-restriction
+  #   config:
+  #     allow:
+  #       - 10.0.0.0/8
+  #       - 172.16.0.0/12
+  #       - 192.168.0.0/16
+  #     deny: []
+  #   tags:
+  #     - security
+  #     - ip-restriction
+
+  # Bot Detection
+  - name: bot-detection
+    config:
+      allow:
+        - "googlebot"
+        - "bingbot"
+      deny: []
+    tags:
+      - security
+      - bot-detection
+
+  # Request Termination for maintenance mode
+  # - name: request-termination
+  #   config:
+  #     status_code: 503
+  #     content_type: "application/json"
+  #     body: '{"message": "Service temporarily unavailable for maintenance"}'
+  #     trigger: 
+  #   enabled: false
+  #   tags:
+  #     - maintenance
+  #     - termination
+
+# =============================================================================
+# ROUTE-SPECIFIC PLUGINS
+# =============================================================================
+
+# Enhanced rate limiting for AI/Translation endpoints
+- name: rate-limiting
+  route: translation-engine-api
+  config:
+    minute: 100
+    hour: 1000
+    day: 10000
+    policy: redis
+    redis_host: redis
+    redis_port: 6379
+    redis_password: "${REDIS_PASSWORD}"
+    hide_client_headers: false
+    fault_tolerant: true
+  tags:
+    - ai-services
+    - rate-limiting
+
+# Enhanced timeout for translation operations
+- name: response-timeout
+  route: translation-engine-api
+  config:
+    timeout: 120000  # 2 minutes for AI operations
+  tags:
+    - ai-services
+    - timeout
+
+# Request validation for API endpoints
+- name: request-validator
+  route: design-parser-api
+  config:
+    allowed_content_types:
+      - application/json
+      - multipart/form-data
+      - application/x-www-form-urlencoded
+    version: draft4
+    verbose_response: true
+  tags:
+    - validation
+    - design-parser
+
+# File upload size limiting for design imports
+- name: request-size-limiting
+  route: design-parser-api
+  config:
+    allowed_payload_size: 100
+    size_unit: megabytes
+    require_content_length: true
+  tags:
+    - file-upload
+    - size-limiting
+
+# WebSocket specific plugins
+- name: rate-limiting
+  route: websocket-collaboration
+  config:
+    minute: 500
+    hour: 5000
+    policy: redis
+    redis_host: redis
+    redis_port: 6379
+    redis_password: "${REDIS_PASSWORD}"
+  tags:
+    - websocket
+    - rate-limiting
+
+# Health check optimization
+- name: response-caching
+  route: health-checks
+  config:
+    cache_ttl: 30
+    cache_control: false
+    strategy: memory
+    memory:
+      dictionary_name: kong_cache
+  tags:
+    - health
+    - caching
+
+# =============================================================================
+# CERTIFICATES (SSL/TLS)
+# =============================================================================
+
+certificates:
+  - cert: |
+      -----BEGIN CERTIFICATE-----
+      # Your SSL certificate content here
+      -----END CERTIFICATE-----
+    key: |
+      -----BEGIN PRIVATE KEY-----
+      # Your SSL private key content here
+      -----END PRIVATE KEY-----
+    tags:
+      - ssl
+      - production
+
+# =============================================================================
+# UPSTREAMS (Load Balancing Configuration)
+# =============================================================================
+
+upstreams:
+  - name: design-parser-upstream
+    algorithm: round-robin
+    hash_on: none
+    hash_fallback: none
+    healthchecks:
+      active:
+        http_path: "/health"
+        healthy:
+          interval: 10
+          http_statuses: [200, 302]
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_statuses: [429, 404, 500, 501, 502, 503, 504, 505]
+          http_failures: 5
+          timeouts: 3
+      passive:
+        healthy:
+          http_statuses: [200, 201, 202, 203, 204, 205, 206, 300, 301, 302, 303, 304, 305, 306, 307, 308]
+          successes: 5
+        unhealthy:
+          http_statuses: [429, 500, 503]
+          http_failures: 5
+          timeouts: 7
+    targets:
+      - target: design-parser:8001
+        weight: 100
+    tags:
+      - load-balancing
+      - design-parser

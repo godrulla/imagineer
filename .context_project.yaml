@@ -1,0 +1,108 @@
+project:
+  name: "Imagineer"
+  type: "general"
+  description: "Revolutionary design center that bridges visual design tools and LLMs, enabling teams to create applications through hybrid approach of graphical design and intelligent prompt engineering"
+
+field_parameters:
+  decay_rate: 0.03
+  attractor_threshold: 0.75
+  boundary_permeability: 0.8
+  resonance_bandwidth: 0.65
+
+initial_context:
+  - content: "Imagineer is a design-to-LLM translation platform that converts graphical designs into structured prompts for AI interpretation"
+    importance: 2.0
+    tags: ["core_concept", "platform_overview"]
+    
+  - content: "Primary value propositions: Visual-to-Prompt Translation, Bi-directional Workflow, Team Collaboration, Stage-aware Development"
+    importance: 1.8
+    tags: ["value_props", "features"]
+    
+  - content: "5-phase development approach: Market Research & Validation, Architecture Design, UX/UI Design, Core Development, AI/ML Integration"
+    importance: 1.7
+    tags: ["development_phases", "roadmap"]
+    
+  - content: "Core technical components: Design Parser Engine, Translation Layer, Export Engine, Collaboration Infrastructure"
+    importance: 1.6
+    tags: ["architecture", "technical_components"]
+    
+  - content: "Primary export format is Enhanced Markdown with structured design specifications, alternative formats include JSON Schema, YAML, Custom DSL"
+    importance: 1.5
+    tags: ["export_formats", "output_specification"]
+    
+  - content: "Success metrics: 90%+ translation accuracy, 70% time savings in design handoff, 1000+ active teams in 6 months"
+    importance: 1.4
+    tags: ["success_metrics", "goals"]
+    
+  - content: "MVP features: Figma API integration, visual-to-markdown conversion, manual prompt editing, basic export functionality"
+    importance: 1.3
+    tags: ["mvp", "initial_features"]
+    
+  - content: "Advanced features: AI-powered design understanding, smart prompt suggestions, multi-format export, real-time collaboration"
+    importance: 1.2
+    tags: ["advanced_features", "future_development"]
+
+protocols:
+  - name: "market_research_workflow"
+    intent: "Conduct comprehensive market research and validation for design-to-LLM solutions"
+    steps: 
+      - "analyze_existing_solutions"
+      - "conduct_user_interviews" 
+      - "identify_target_personas"
+      - "validate_demand"
+      - "research_optimal_formats"
+    
+  - name: "architecture_design_workflow"
+    intent: "Design modular architecture supporting multiple design input sources and output formats"
+    steps:
+      - "design_modular_architecture"
+      - "create_plugin_architecture"
+      - "develop_translation_engine"
+      - "design_export_pipeline"
+      - "plan_scalability"
+    
+  - name: "ui_design_workflow"  
+    intent: "Create intuitive interface for design input, manipulation and prompt generation"
+    steps:
+      - "design_split_view_interface"
+      - "create_design_inspector"
+      - "build_prompt_template_library"
+      - "design_export_customization"
+      - "create_stage_tracker"
+    
+  - name: "core_development_workflow"
+    intent: "Implement core parsing, translation and export functionality"
+    steps:
+      - "implement_design_parser"
+      - "build_translation_algorithms"
+      - "develop_export_functionality"
+      - "create_api_integrations"
+      - "build_web_interface"
+    
+  - name: "ai_integration_workflow"
+    intent: "Train models and implement AI-powered design understanding and optimization"
+    steps:
+      - "train_translation_models"
+      - "implement_prompt_optimization"
+      - "create_feedback_loops"
+      - "develop_pattern_recognition"
+      - "build_component_mapping"
+
+context_sources:
+  - type: "document"
+    path: "imagineer-development-prompt.md"
+    importance: 2.0
+    auto_refresh: true
+    
+field_attractors:
+  - name: "design_to_llm_translation"
+    pattern: "visual design tools communication with LLMs"
+    strength: 0.9
+    
+  - name: "export_format_optimization" 
+    pattern: "structured prompts and markdown generation"
+    strength: 0.85
+    
+  - name: "collaboration_workflow"
+    pattern: "multi-disciplinary team development process"
+    strength: 0.8

@@ -1,0 +1,2065 @@
+openapi: 3.0.3
+info:
+  title: Imagineer Collaboration Hub Service API
+  description: |
+    The Collaboration Hub Service enables real-time collaboration features for the Imagineer platform.
+    It manages team workspaces, real-time synchronization, comments, notifications, and live editing sessions.
+    
+    ## Key Capabilities
+    - Real-time collaborative editing and design review
+    - Comment and annotation system
+    - Team workspace management
+    - Live cursor tracking and presence awareness
+    - Activity feeds and notifications
+    - Permission-based access control
+    - WebSocket-based real-time communication
+    
+    ## Real-time Communication
+    This service supports WebSocket connections for real-time features:
+    - Base WebSocket URL: `wss://api.imagineer.dev/v1/collaboration/ws`
+    - Authentication via JWT token in connection query parameter
+    - Automatic reconnection with exponential backoff
+    
+    ## Authentication
+    All endpoints require organization-level authentication via API key or JWT token.
+    Multi-tenant access is enforced at the organization level.
+  version: "1.0.0"
+  contact:
+    name: Imagineer API Support
+    url: https://docs.imagineer.dev
+    email: api-support@imagineer.dev
+  license:
+    name: Proprietary
+    url: https://imagineer.dev/license
+
+servers:
+  - url: https://api.imagineer.dev/v1/collaboration
+    description: Production API
+  - url: https://staging-api.imagineer.dev/v1/collaboration
+    description: Staging API
+  - url: http://localhost:8004/v1
+    description: Local Development
+
+security:
+  - apiKey: []
+  - bearerAuth: []
+
+paths:
+  # ============================================================================
+  # HEALTH & STATUS
+  # ============================================================================
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Returns service health status and WebSocket server availability
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /status:
+    get:
+      summary: Detailed service status
+      description: Returns detailed service status including real-time connection metrics
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: Detailed service status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceStatus'
+
+  # ============================================================================
+  # WORKSPACES
+  # ============================================================================
+  /workspaces:
+    get:
+      summary: List workspaces
+      description: Retrieve paginated list of collaborative workspaces
+      tags: [Workspaces]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SortParam'
+        - name: team_id
+          in: query
+          description: Filter by team ID
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          description: Filter by workspace status
+          schema:
+            $ref: '#/components/schemas/WorkspaceStatus'
+        - name: search
+          in: query
+          description: Search in workspace names and descriptions
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        '200':
+          description: List of workspaces
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Workspace'
+
+    post:
+      summary: Create workspace
+      description: Create a new collaborative workspace
+      tags: [Workspaces]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkspaceRequest'
+      responses:
+        '201':
+          description: Workspace created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /workspaces/{workspaceId}:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdParam'
+    
+    get:
+      summary: Get workspace details
+      description: Retrieve detailed information about a workspace
+      tags: [Workspaces]
+      responses:
+        '200':
+          description: Workspace details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      summary: Update workspace
+      description: Update workspace information and settings
+      tags: [Workspaces]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkspaceRequest'
+      responses:
+        '200':
+          description: Workspace updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Delete workspace
+      description: Soft delete a workspace and end all active sessions
+      tags: [Workspaces]
+      responses:
+        '204':
+          description: Workspace deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /workspaces/{workspaceId}/join:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdParam'
+    
+    post:
+      summary: Join workspace
+      description: Join a collaborative workspace session
+      tags: [Workspaces]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinWorkspaceRequest'
+      responses:
+        '200':
+          description: Successfully joined workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceSession'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /workspaces/{workspaceId}/leave:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdParam'
+    
+    post:
+      summary: Leave workspace
+      description: Leave a collaborative workspace session
+      tags: [Workspaces]
+      responses:
+        '204':
+          description: Successfully left workspace
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /workspaces/{workspaceId}/participants:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdParam'
+    
+    get:
+      summary: Get workspace participants
+      description: Retrieve list of current workspace participants
+      tags: [Workspaces]
+      responses:
+        '200':
+          description: List of participants
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkspaceParticipant'
+
+  # ============================================================================
+  # REAL-TIME SESSIONS
+  # ============================================================================
+  /sessions:
+    get:
+      summary: List active sessions
+      description: Retrieve list of active collaboration sessions
+      tags: [Sessions]
+      parameters:
+        - name: workspace_id
+          in: query
+          description: Filter by workspace ID
+          schema:
+            type: string
+            format: uuid
+        - name: user_id
+          in: query
+          description: Filter by user ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of active sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CollaborationSession'
+
+  /sessions/{sessionId}:
+    parameters:
+      - $ref: '#/components/parameters/SessionIdParam'
+    
+    get:
+      summary: Get session details
+      description: Retrieve detailed information about a collaboration session
+      tags: [Sessions]
+      responses:
+        '200':
+          description: Session details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollaborationSessionDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: End session
+      description: Forcefully end a collaboration session
+      tags: [Sessions]
+      responses:
+        '204':
+          description: Session ended successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================================================
+  # COMMENTS & ANNOTATIONS
+  # ============================================================================
+  /comments:
+    get:
+      summary: List comments
+      description: Retrieve paginated list of comments and annotations
+      tags: [Comments]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: project_id
+          in: query
+          description: Filter by project ID
+          schema:
+            type: string
+            format: uuid
+        - name: design_file_id
+          in: query
+          description: Filter by design file ID
+          schema:
+            type: string
+            format: uuid
+        - name: element_id
+          in: query
+          description: Filter by design element ID
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          description: Filter by comment status
+          schema:
+            $ref: '#/components/schemas/CommentStatus'
+        - name: author_id
+          in: query
+          description: Filter by comment author
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of comments
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Comment'
+
+    post:
+      summary: Create comment
+      description: Create a new comment or annotation
+      tags: [Comments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommentRequest'
+      responses:
+        '201':
+          description: Comment created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /comments/{commentId}:
+    parameters:
+      - $ref: '#/components/parameters/CommentIdParam'
+    
+    get:
+      summary: Get comment details
+      description: Retrieve detailed information about a comment
+      tags: [Comments]
+      responses:
+        '200':
+          description: Comment details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      summary: Update comment
+      description: Update comment content or status
+      tags: [Comments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCommentRequest'
+      responses:
+        '200':
+          description: Comment updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Delete comment
+      description: Soft delete a comment
+      tags: [Comments]
+      responses:
+        '204':
+          description: Comment deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /comments/{commentId}/replies:
+    parameters:
+      - $ref: '#/components/parameters/CommentIdParam'
+    
+    get:
+      summary: Get comment replies
+      description: Retrieve replies to a specific comment
+      tags: [Comments]
+      responses:
+        '200':
+          description: List of comment replies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Comment'
+
+    post:
+      summary: Reply to comment
+      description: Create a reply to an existing comment
+      tags: [Comments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReplyRequest'
+      responses:
+        '201':
+          description: Reply created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+
+  /comments/{commentId}/reactions:
+    parameters:
+      - $ref: '#/components/parameters/CommentIdParam'
+    
+    get:
+      summary: Get comment reactions
+      description: Retrieve reactions (likes, etc.) for a comment
+      tags: [Comments]
+      responses:
+        '200':
+          description: List of comment reactions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CommentReaction'
+
+    post:
+      summary: Add reaction to comment
+      description: Add a reaction (like, etc.) to a comment
+      tags: [Comments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddReactionRequest'
+      responses:
+        '201':
+          description: Reaction added successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentReaction'
+
+    delete:
+      summary: Remove reaction from comment
+      description: Remove user's reaction from a comment
+      tags: [Comments]
+      parameters:
+        - name: reaction_type
+          in: query
+          required: true
+          description: Type of reaction to remove
+          schema:
+            $ref: '#/components/schemas/ReactionType'
+      responses:
+        '204':
+          description: Reaction removed successfully
+
+  # ============================================================================
+  # NOTIFICATIONS
+  # ============================================================================
+  /notifications:
+    get:
+      summary: List notifications
+      description: Retrieve paginated list of user notifications
+      tags: [Notifications]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: read_status
+          in: query
+          description: Filter by read status
+          schema:
+            type: string
+            enum: [read, unread, all]
+            default: all
+        - name: notification_type
+          in: query
+          description: Filter by notification type
+          schema:
+            $ref: '#/components/schemas/NotificationType'
+        - name: since
+          in: query
+          description: Get notifications since timestamp
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: List of notifications
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Notification'
+
+  /notifications/{notificationId}/read:
+    parameters:
+      - name: notificationId
+        in: path
+        required: true
+        description: Notification identifier
+        schema:
+          type: string
+          format: uuid
+    
+    post:
+      summary: Mark notification as read
+      description: Mark a specific notification as read
+      tags: [Notifications]
+      responses:
+        '204':
+          description: Notification marked as read
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /notifications/read-all:
+    post:
+      summary: Mark all notifications as read
+      description: Mark all user notifications as read
+      tags: [Notifications]
+      responses:
+        '204':
+          description: All notifications marked as read
+
+  /notifications/preferences:
+    get:
+      summary: Get notification preferences
+      description: Retrieve user notification preferences
+      tags: [Notifications]
+      responses:
+        '200':
+          description: Notification preferences
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreferences'
+
+    put:
+      summary: Update notification preferences
+      description: Update user notification preferences
+      tags: [Notifications]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNotificationPreferencesRequest'
+      responses:
+        '200':
+          description: Preferences updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreferences'
+
+  # ============================================================================
+  # ACTIVITY FEEDS
+  # ============================================================================
+  /activities:
+    get:
+      summary: Get activity feed
+      description: Retrieve activity feed for projects and workspaces
+      tags: [Activity]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: project_id
+          in: query
+          description: Filter by project ID
+          schema:
+            type: string
+            format: uuid
+        - name: workspace_id
+          in: query
+          description: Filter by workspace ID
+          schema:
+            type: string
+            format: uuid
+        - name: activity_type
+          in: query
+          description: Filter by activity type
+          schema:
+            $ref: '#/components/schemas/ActivityType'
+        - name: since
+          in: query
+          description: Get activities since timestamp
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Activity feed
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Activity'
+
+  # ============================================================================
+  # PRESENCE & AWARENESS
+  # ============================================================================
+  /presence:
+    get:
+      summary: Get user presence
+      description: Retrieve current user presence across workspaces
+      tags: [Presence]
+      responses:
+        '200':
+          description: User presence information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPresence'
+
+    post:
+      summary: Update presence
+      description: Update user presence status
+      tags: [Presence]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePresenceRequest'
+      responses:
+        '200':
+          description: Presence updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPresence'
+
+  /presence/workspace/{workspaceId}:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdParam'
+    
+    get:
+      summary: Get workspace presence
+      description: Retrieve presence information for all users in a workspace
+      tags: [Presence]
+      responses:
+        '200':
+          description: Workspace presence information
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkspacePresence'
+
+  # ============================================================================
+  # PERMISSIONS & ACCESS CONTROL
+  # ============================================================================
+  /permissions/workspace/{workspaceId}:
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceIdParam'
+    
+    get:
+      summary: Get workspace permissions
+      description: Retrieve permission settings for a workspace
+      tags: [Permissions]
+      responses:
+        '200':
+          description: Workspace permissions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspacePermissions'
+
+    put:
+      summary: Update workspace permissions
+      description: Update permission settings for a workspace
+      tags: [Permissions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkspacePermissionsRequest'
+      responses:
+        '200':
+          description: Permissions updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspacePermissions'
+
+  /permissions/user/{userId}/workspace/{workspaceId}:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        description: User identifier
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/WorkspaceIdParam'
+    
+    get:
+      summary: Get user workspace permissions
+      description: Retrieve specific user permissions for a workspace
+      tags: [Permissions]
+      responses:
+        '200':
+          description: User workspace permissions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserWorkspacePermissions'
+
+    put:
+      summary: Update user workspace permissions
+      description: Update specific user permissions for a workspace
+      tags: [Permissions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserWorkspacePermissionsRequest'
+      responses:
+        '200':
+          description: User permissions updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserWorkspacePermissions'
+
+  # ============================================================================
+  # WEBSOCKET CONNECTION INFO
+  # ============================================================================
+  /ws/connection-info:
+    get:
+      summary: Get WebSocket connection information
+      description: Retrieve WebSocket connection details and authentication token
+      tags: [WebSocket]
+      responses:
+        '200':
+          description: WebSocket connection information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebSocketConnectionInfo'
+
+# ============================================================================
+# COMPONENTS
+# ============================================================================
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Organization API key for authentication
+    
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for user authentication
+
+  parameters:
+    WorkspaceIdParam:
+      name: workspaceId
+      in: path
+      required: true
+      description: Unique workspace identifier
+      schema:
+        type: string
+        format: uuid
+    
+    SessionIdParam:
+      name: sessionId
+      in: path
+      required: true
+      description: Unique session identifier
+      schema:
+        type: string
+        format: uuid
+    
+    CommentIdParam:
+      name: commentId
+      in: path
+      required: true
+      description: Unique comment identifier
+      schema:
+        type: string
+        format: uuid
+    
+    PageParam:
+      name: page
+      in: query
+      description: Page number for pagination
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    
+    LimitParam:
+      name: limit
+      in: query
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    
+    SortParam:
+      name: sort
+      in: query
+      description: Sort order (field:direction)
+      schema:
+        type: string
+        pattern: '^[a-zA-Z_][a-zA-Z0-9_]*:(asc|desc)$'
+        default: 'created_at:desc'
+
+  schemas:
+    # ========================================================================
+    # CORE DATA MODELS
+    # ========================================================================
+    Workspace:
+      type: object
+      required: [id, organization_id, name, status, created_at, created_by]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique workspace identifier
+        organization_id:
+          type: string
+          format: uuid
+          description: Organization that owns this workspace
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Associated team
+        project_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Associated project
+        name:
+          type: string
+          maxLength: 255
+          description: Workspace display name
+        description:
+          type: string
+          nullable: true
+          description: Workspace description
+        settings:
+          type: object
+          description: Workspace configuration settings
+        permissions:
+          type: object
+          description: Workspace permission settings
+        max_participants:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+          description: Maximum concurrent participants
+        is_public:
+          type: boolean
+          default: false
+          description: Whether workspace is publicly accessible
+        invite_code:
+          type: string
+          maxLength: 50
+          nullable: true
+          description: Invitation code for joining
+        status:
+          $ref: '#/components/schemas/WorkspaceStatus'
+        active_participants:
+          type: integer
+          minimum: 0
+          description: Current number of active participants
+        last_activity_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Last activity timestamp
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+          format: uuid
+
+    WorkspaceDetail:
+      allOf:
+        - $ref: '#/components/schemas/Workspace'
+        - type: object
+          properties:
+            current_participants:
+              type: array
+              items:
+                $ref: '#/components/schemas/WorkspaceParticipant'
+            recent_activity:
+              type: array
+              items:
+                $ref: '#/components/schemas/Activity'
+              description: Recent workspace activity
+            permission_details:
+              $ref: '#/components/schemas/WorkspacePermissions'
+
+    WorkspaceParticipant:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+        role:
+          $ref: '#/components/schemas/ParticipantRole'
+        permissions:
+          type: array
+          items:
+            type: string
+        presence:
+          $ref: '#/components/schemas/PresenceStatus'
+        cursor_position:
+          $ref: '#/components/schemas/CursorPosition'
+        joined_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+
+    WorkspaceSession:
+      type: object
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        websocket_url:
+          type: string
+          format: uri
+          description: WebSocket URL for real-time connection
+        connection_token:
+          type: string
+          description: Token for WebSocket authentication
+        expires_at:
+          type: string
+          format: date-time
+        permissions:
+          type: array
+          items:
+            type: string
+        settings:
+          type: object
+
+    CollaborationSession:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        workspace_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        connection_id:
+          type: string
+          description: WebSocket connection identifier
+        user_agent:
+          type: string
+        ip_address:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        last_activity_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [active, idle, disconnected]
+
+    CollaborationSessionDetail:
+      allOf:
+        - $ref: '#/components/schemas/CollaborationSession'
+        - type: object
+          properties:
+            activity_log:
+              type: array
+              items:
+                $ref: '#/components/schemas/SessionActivity'
+            bandwidth_usage:
+              type: object
+              properties:
+                bytes_sent:
+                  type: integer
+                bytes_received:
+                  type: integer
+                messages_sent:
+                  type: integer
+                messages_received:
+                  type: integer
+
+    Comment:
+      type: object
+      required: [id, author_id, content, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        parent_comment_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Parent comment for replies
+        project_id:
+          type: string
+          format: uuid
+          nullable: true
+        design_file_id:
+          type: string
+          format: uuid
+          nullable: true
+        element_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Specific design element being commented on
+        author_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+          maxLength: 5000
+          description: Comment text content
+        content_type:
+          type: string
+          enum: [text, markdown]
+          default: text
+        annotation:
+          $ref: '#/components/schemas/CommentAnnotation'
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommentAttachment'
+        mentions:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: User IDs mentioned in the comment
+        tags:
+          type: array
+          items:
+            type: string
+          description: Comment tags
+        status:
+          $ref: '#/components/schemas/CommentStatus'
+        resolution:
+          $ref: '#/components/schemas/CommentResolution'
+        reactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommentReaction'
+        reply_count:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolved_by:
+          type: string
+          format: uuid
+          nullable: true
+
+    CommentDetail:
+      allOf:
+        - $ref: '#/components/schemas/Comment'
+        - type: object
+          properties:
+            author_details:
+              $ref: '#/components/schemas/UserSummary'
+            replies:
+              type: array
+              items:
+                $ref: '#/components/schemas/Comment'
+            edit_history:
+              type: array
+              items:
+                $ref: '#/components/schemas/CommentEdit'
+
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/NotificationType'
+        title:
+          type: string
+        message:
+          type: string
+        data:
+          type: object
+          description: Notification-specific data
+        read:
+          type: boolean
+          default: false
+        action_url:
+          type: string
+          format: uri
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    Activity:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        actor_id:
+          type: string
+          format: uuid
+        actor_name:
+          type: string
+        activity_type:
+          $ref: '#/components/schemas/ActivityType'
+        object_type:
+          type: string
+          enum: [project, workspace, comment, design_file]
+        object_id:
+          type: string
+          format: uuid
+        object_name:
+          type: string
+        description:
+          type: string
+        metadata:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+
+    UserPresence:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/PresenceStatus'
+        custom_message:
+          type: string
+          maxLength: 100
+          nullable: true
+        current_workspace:
+          type: string
+          format: uuid
+          nullable: true
+        active_workspaces:
+          type: array
+          items:
+            type: string
+            format: uuid
+        last_seen_at:
+          type: string
+          format: date-time
+        timezone:
+          type: string
+
+    WorkspacePresence:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        user_name:
+          type: string
+        user_avatar:
+          type: string
+          format: uri
+          nullable: true
+        status:
+          $ref: '#/components/schemas/PresenceStatus'
+        cursor_position:
+          $ref: '#/components/schemas/CursorPosition'
+        viewing_element:
+          type: string
+          format: uuid
+          nullable: true
+        last_activity:
+          type: string
+          format: date-time
+
+    # ========================================================================
+    # REQUEST MODELS
+    # ========================================================================
+    CreateWorkspaceRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+        project_id:
+          type: string
+          format: uuid
+          nullable: true
+        settings:
+          type: object
+        max_participants:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        is_public:
+          type: boolean
+          default: false
+
+    UpdateWorkspaceRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+        settings:
+          type: object
+        max_participants:
+          type: integer
+          minimum: 1
+          maximum: 100
+        is_public:
+          type: boolean
+
+    JoinWorkspaceRequest:
+      type: object
+      properties:
+        invite_code:
+          type: string
+          maxLength: 50
+          nullable: true
+        initial_cursor_position:
+          $ref: '#/components/schemas/CursorPosition'
+
+    CreateCommentRequest:
+      type: object
+      required: [content]
+      properties:
+        parent_comment_id:
+          type: string
+          format: uuid
+          nullable: true
+        project_id:
+          type: string
+          format: uuid
+          nullable: true
+        design_file_id:
+          type: string
+          format: uuid
+          nullable: true
+        element_id:
+          type: string
+          format: uuid
+          nullable: true
+        content:
+          type: string
+          maxLength: 5000
+        content_type:
+          type: string
+          enum: [text, markdown]
+          default: text
+        annotation:
+          $ref: '#/components/schemas/CommentAnnotation'
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommentAttachment'
+        mentions:
+          type: array
+          items:
+            type: string
+            format: uuid
+        tags:
+          type: array
+          items:
+            type: string
+
+    UpdateCommentRequest:
+      type: object
+      properties:
+        content:
+          type: string
+          maxLength: 5000
+        content_type:
+          type: string
+          enum: [text, markdown]
+        status:
+          $ref: '#/components/schemas/CommentStatus'
+        tags:
+          type: array
+          items:
+            type: string
+
+    CreateReplyRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          maxLength: 5000
+        content_type:
+          type: string
+          enum: [text, markdown]
+          default: text
+        mentions:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    AddReactionRequest:
+      type: object
+      required: [reaction_type]
+      properties:
+        reaction_type:
+          $ref: '#/components/schemas/ReactionType'
+
+    UpdatePresenceRequest:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/PresenceStatus'
+        custom_message:
+          type: string
+          maxLength: 100
+          nullable: true
+        current_workspace:
+          type: string
+          format: uuid
+          nullable: true
+
+    UpdateNotificationPreferencesRequest:
+      type: object
+      properties:
+        email_notifications:
+          type: object
+          additionalProperties:
+            type: boolean
+        push_notifications:
+          type: object
+          additionalProperties:
+            type: boolean
+        in_app_notifications:
+          type: object
+          additionalProperties:
+            type: boolean
+
+    UpdateWorkspacePermissionsRequest:
+      type: object
+      properties:
+        default_role:
+          $ref: '#/components/schemas/ParticipantRole'
+        permissions:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        invite_permissions:
+          type: object
+        public_access:
+          type: boolean
+
+    UpdateUserWorkspacePermissionsRequest:
+      type: object
+      properties:
+        role:
+          $ref: '#/components/schemas/ParticipantRole'
+        permissions:
+          type: array
+          items:
+            type: string
+
+    # ========================================================================
+    # RESPONSE MODELS
+    # ========================================================================
+    WebSocketConnectionInfo:
+      type: object
+      properties:
+        websocket_url:
+          type: string
+          format: uri
+        connection_token:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        heartbeat_interval_ms:
+          type: integer
+        max_message_size_bytes:
+          type: integer
+        supported_protocols:
+          type: array
+          items:
+            type: string
+
+    NotificationPreferences:
+      type: object
+      properties:
+        email_notifications:
+          type: object
+          properties:
+            comments:
+              type: boolean
+            mentions:
+              type: boolean
+            workspace_invites:
+              type: boolean
+            activity_summaries:
+              type: boolean
+        push_notifications:
+          type: object
+          properties:
+            comments:
+              type: boolean
+            mentions:
+              type: boolean
+            workspace_invites:
+              type: boolean
+        in_app_notifications:
+          type: object
+          properties:
+            comments:
+              type: boolean
+            mentions:
+              type: boolean
+            workspace_invites:
+              type: boolean
+            real_time_updates:
+              type: boolean
+
+    WorkspacePermissions:
+      type: object
+      properties:
+        default_role:
+          $ref: '#/components/schemas/ParticipantRole'
+        role_permissions:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        invite_permissions:
+          type: object
+          properties:
+            who_can_invite:
+              type: array
+              items:
+                $ref: '#/components/schemas/ParticipantRole'
+            require_approval:
+              type: boolean
+        public_access:
+          type: boolean
+        comment_permissions:
+          type: object
+          properties:
+            who_can_comment:
+              type: array
+              items:
+                $ref: '#/components/schemas/ParticipantRole'
+            who_can_resolve:
+              type: array
+              items:
+                $ref: '#/components/schemas/ParticipantRole'
+
+    UserWorkspacePermissions:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        role:
+          $ref: '#/components/schemas/ParticipantRole'
+        permissions:
+          type: array
+          items:
+            type: string
+        granted_at:
+          type: string
+          format: date-time
+        granted_by:
+          type: string
+          format: uuid
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        uptime_seconds:
+          type: integer
+
+    ServiceStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        websocket_server:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [healthy, unhealthy]
+            active_connections:
+              type: integer
+            total_connections_today:
+              type: integer
+            average_response_time_ms:
+              type: number
+        real_time_features:
+          type: object
+          properties:
+            presence_tracking:
+              type: string
+              enum: [operational, degraded, down]
+            live_cursors:
+              type: string
+              enum: [operational, degraded, down]
+            comment_sync:
+              type: string
+              enum: [operational, degraded, down]
+        metrics:
+          type: object
+          properties:
+            active_workspaces:
+              type: integer
+            active_participants:
+              type: integer
+            messages_per_second:
+              type: number
+            memory_usage_mb:
+              type: number
+            cpu_usage_percent:
+              type: number
+
+    # ========================================================================
+    # UTILITY MODELS
+    # ========================================================================
+    PaginatedResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          description: Array of data items
+        pagination:
+          type: object
+          properties:
+            page:
+              type: integer
+              minimum: 1
+            limit:
+              type: integer
+              minimum: 1
+            total:
+              type: integer
+              minimum: 0
+            pages:
+              type: integer
+              minimum: 0
+            has_next:
+              type: boolean
+            has_prev:
+              type: boolean
+
+    # ========================================================================
+    # ENUMS
+    # ========================================================================
+    WorkspaceStatus:
+      type: string
+      enum: [active, paused, archived, deleted]
+      description: Workspace status
+
+    ParticipantRole:
+      type: string
+      enum: [owner, admin, editor, commenter, viewer]
+      description: Participant role in workspace
+
+    PresenceStatus:
+      type: string
+      enum: [online, away, busy, offline]
+      description: User presence status
+
+    CommentStatus:
+      type: string
+      enum: [open, resolved, archived]
+      description: Comment status
+
+    NotificationType:
+      type: string
+      enum: [comment, mention, workspace_invite, activity_summary, system]
+      description: Notification types
+
+    ActivityType:
+      type: string
+      enum: [joined_workspace, left_workspace, created_comment, resolved_comment, uploaded_file, shared_workspace]
+      description: Activity types
+
+    ReactionType:
+      type: string
+      enum: [like, love, laugh, thumbs_up, thumbs_down]
+      description: Comment reaction types
+
+    # ========================================================================
+    # SUPPORTING MODELS
+    # ========================================================================
+    CommentAnnotation:
+      type: object
+      properties:
+        position:
+          $ref: '#/components/schemas/Position'
+        dimensions:
+          $ref: '#/components/schemas/Dimensions'
+        annotation_type:
+          type: string
+          enum: [point, area, line, text]
+        style:
+          type: object
+          properties:
+            color:
+              type: string
+            stroke_width:
+              type: number
+            opacity:
+              type: number
+
+    CommentAttachment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        file_size_bytes:
+          type: integer
+        mime_type:
+          type: string
+        url:
+          type: string
+          format: uri
+        thumbnail_url:
+          type: string
+          format: uri
+          nullable: true
+
+    CommentReaction:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        user_name:
+          type: string
+        reaction_type:
+          $ref: '#/components/schemas/ReactionType'
+        created_at:
+          type: string
+          format: date-time
+
+    CommentResolution:
+      type: object
+      properties:
+        resolved:
+          type: boolean
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolved_by:
+          type: string
+          format: uuid
+          nullable: true
+        resolution_note:
+          type: string
+          nullable: true
+
+    CommentEdit:
+      type: object
+      properties:
+        edited_at:
+          type: string
+          format: date-time
+        edited_by:
+          type: string
+          format: uuid
+        changes:
+          type: object
+          properties:
+            content_before:
+              type: string
+            content_after:
+              type: string
+
+    CursorPosition:
+      type: object
+      properties:
+        x:
+          type: number
+        y:
+          type: number
+        element_id:
+          type: string
+          format: uuid
+          nullable: true
+        viewport:
+          type: object
+          properties:
+            width:
+              type: number
+            height:
+              type: number
+            zoom:
+              type: number
+
+    Position:
+      type: object
+      properties:
+        x:
+          type: number
+        y:
+          type: number
+
+    Dimensions:
+      type: object
+      properties:
+        width:
+          type: number
+        height:
+          type: number
+
+    UserSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+        role:
+          type: string
+
+    SessionActivity:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        activity_type:
+          type: string
+          enum: [message_sent, message_received, cursor_moved, presence_changed]
+        details:
+          type: object
+
+    # ========================================================================
+    # ERROR MODELS
+    # ========================================================================
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Error code for programmatic handling
+            message:
+              type: string
+              description: Human-readable error message
+            details:
+              type: object
+              description: Additional error details
+            request_id:
+              type: string
+              description: Request ID for tracking
+
+    ValidationError:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          properties:
+            error:
+              type: object
+              properties:
+                validation_errors:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      field:
+                        type: string
+                      message:
+                        type: string
+                      value:
+                        description: The invalid value
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid input parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationError'
+
+    Unauthorized:
+      description: Unauthorized - authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Forbidden:
+      description: Forbidden - insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Conflict:
+      description: Conflict - resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    RateLimitExceeded:
+      description: Rate limit exceeded
+      headers:
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+          description: Request limit per time window
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+          description: Remaining requests in current window
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+          description: Time when rate limit resets (Unix timestamp)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+# ============================================================================
+# TAGS
+# ============================================================================
+tags:
+  - name: Health
+    description: Service health and status endpoints
+  - name: Workspaces
+    description: Collaborative workspace management
+  - name: Sessions
+    description: Real-time collaboration session management
+  - name: Comments
+    description: Comment and annotation system
+  - name: Notifications
+    description: User notification management
+  - name: Activity
+    description: Activity feed and history
+  - name: Presence
+    description: User presence and awareness
+  - name: Permissions
+    description: Access control and permissions
+  - name: WebSocket
+    description: WebSocket connection management
+
+# ============================================================================
+# EXTERNAL DOCS
+# ============================================================================
+externalDocs:
+  description: |
+    Imagineer Collaboration Hub Service Documentation
+    
+    ## WebSocket Protocol Documentation
+    
+    ### Connection
+    ```javascript
+    const ws = new WebSocket('wss://api.imagineer.dev/v1/collaboration/ws?token=JWT_TOKEN');
+    ```
+    
+    ### Message Format
+    All WebSocket messages follow this format:
+    ```json
+    {
+      "type": "message_type",
+      "workspace_id": "uuid",
+      "data": {},
+      "timestamp": "2024-01-01T12:00:00Z"
+    }
+    ```
+    
+    ### Supported Message Types
+    - `presence_update` - User presence changes
+    - `cursor_move` - Real-time cursor position
+    - `comment_added` - New comment notifications
+    - `comment_updated` - Comment modifications
+    - `workspace_join` - User joined workspace
+    - `workspace_leave` - User left workspace
+    - `heartbeat` - Connection keepalive
+    
+    ### Error Handling
+    WebSocket errors are sent as:
+    ```json
+    {
+      "type": "error",
+      "error": {
+        "code": "error_code",
+        "message": "Error description"
+      }
+    }
+    ```
+  url: https://docs.imagineer.dev/api/collaboration-hub

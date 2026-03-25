@@ -1,0 +1,386 @@
+{
+  "name": "Imagineer Platform CDN Configuration",
+  "description": "Comprehensive CDN setup for global performance optimization",
+  "version": "1.0.0",
+  "zones": [
+    {
+      "name": "imagineer.com",
+      "type": "full",
+      "settings": {
+        "security_level": "high",
+        "ssl": "flexible",
+        "ssl_minimum_version": "1.2",
+        "tls_1_3": "on",
+        "automatic_https_rewrites": "on",
+        "always_use_https": "on",
+        "http_strict_transport_security": {
+          "enabled": true,
+          "max_age": 31536000,
+          "include_subdomains": true,
+          "preload": true
+        }
+      },
+      "page_rules": [
+        {
+          "targets": [
+            {
+              "target": "url",
+              "constraint": {
+                "operator": "matches",
+                "value": "imagineer.com/api/*"
+              }
+            }
+          ],
+          "actions": [
+            {
+              "id": "cache_level",
+              "value": "bypass"
+            },
+            {
+              "id": "security_level",
+              "value": "high"
+            },
+            {
+              "id": "browser_cache_ttl",
+              "value": 0
+            }
+          ],
+          "priority": 1,
+          "status": "active"
+        },
+        {
+          "targets": [
+            {
+              "target": "url",
+              "constraint": {
+                "operator": "matches",
+                "value": "imagineer.com/assets/*"
+              }
+            }
+          ],
+          "actions": [
+            {
+              "id": "cache_level",
+              "value": "cache_everything"
+            },
+            {
+              "id": "edge_cache_ttl",
+              "value": 2592000
+            },
+            {
+              "id": "browser_cache_ttl",
+              "value": 31536000
+            }
+          ],
+          "priority": 2,
+          "status": "active"
+        },
+        {
+          "targets": [
+            {
+              "target": "url",
+              "constraint": {
+                "operator": "matches",
+                "value": "*.imagineer.com/static/*"
+              }
+            }
+          ],
+          "actions": [
+            {
+              "id": "cache_level",
+              "value": "cache_everything"
+            },
+            {
+              "id": "edge_cache_ttl",
+              "value": 2592000
+            },
+            {
+              "id": "browser_cache_ttl",
+              "value": 31536000
+            },
+            {
+              "id": "rocket_loader",
+              "value": "on"
+            }
+          ],
+          "priority": 3,
+          "status": "active"
+        },
+        {
+          "targets": [
+            {
+              "target": "url",
+              "constraint": {
+                "operator": "matches",
+                "value": "imagineer.com/ws/*"
+              }
+            }
+          ],
+          "actions": [
+            {
+              "id": "cache_level",
+              "value": "bypass"
+            },
+            {
+              "id": "disable_apps",
+              "value": true
+            }
+          ],
+          "priority": 4,
+          "status": "active"
+        }
+      ],
+      "workers": [
+        {
+          "name": "asset-optimization",
+          "script": "asset-optimization-worker.js",
+          "routes": [
+            "imagineer.com/assets/*",
+            "cdn.imagineer.com/*"
+          ]
+        },
+        {
+          "name": "api-rate-limiting",
+          "script": "api-rate-limiting-worker.js",
+          "routes": [
+            "imagineer.com/api/*"
+          ]
+        }
+      ]
+    }
+  ],
+  "load_balancing": {
+    "pools": [
+      {
+        "name": "imagineer-primary",
+        "description": "Primary application servers",
+        "enabled": true,
+        "minimum_origins": 1,
+        "monitor": "health-check-monitor",
+        "origins": [
+          {
+            "name": "primary-server-1",
+            "address": "app1.imagineer.com",
+            "enabled": true,
+            "weight": 1,
+            "header": {
+              "Host": ["imagineer.com"]
+            }
+          },
+          {
+            "name": "primary-server-2", 
+            "address": "app2.imagineer.com",
+            "enabled": true,
+            "weight": 1,
+            "header": {
+              "Host": ["imagineer.com"]
+            }
+          }
+        ]
+      }
+    ],
+    "monitors": [
+      {
+        "name": "health-check-monitor",
+        "type": "https",
+        "description": "Monitor application health",
+        "method": "GET",
+        "path": "/health",
+        "header": {
+          "Host": ["imagineer.com"],
+          "User-Agent": ["Cloudflare-Health-Check"]
+        },
+        "timeout": 5,
+        "retries": 2,
+        "interval": 60,
+        "expected_codes": "200",
+        "expected_body": "healthy",
+        "follow_redirects": false,
+        "allow_insecure": false
+      }
+    ]
+  },
+  "rate_limiting": [
+    {
+      "id": "api-global-limit",
+      "match": {
+        "request": {
+          "url": "*/api/*"
+        }
+      },
+      "action": {
+        "mode": "simulate",
+        "timeout": 86400
+      },
+      "threshold": 1000,
+      "period": 600,
+      "correlate": {
+        "by": "nat"
+      }
+    },
+    {
+      "id": "login-rate-limit", 
+      "match": {
+        "request": {
+          "url": "*/api/v1/auth/login",
+          "method": "POST"
+        }
+      },
+      "action": {
+        "mode": "block",
+        "timeout": 3600,
+        "response": {
+          "status_code": 429,
+          "content_type": "application/json",
+          "content": "{\"error\": \"Too many login attempts. Please try again later.\"}"
+        }
+      },
+      "threshold": 5,
+      "period": 300,
+      "correlate": {
+        "by": "nat"
+      }
+    }
+  ],
+  "firewall_rules": [
+    {
+      "filter": {
+        "expression": "(http.request.uri.path contains \"/admin\" and not ip.src in {192.168.1.0/24 10.0.0.0/8})"
+      },
+      "action": "block",
+      "description": "Block admin access from non-authorized IPs"
+    },
+    {
+      "filter": {
+        "expression": "(http.user_agent contains \"bot\" and not http.user_agent contains \"googlebot\" and not http.user_agent contains \"bingbot\")"
+      },
+      "action": "challenge",
+      "description": "Challenge suspicious bots"
+    },
+    {
+      "filter": {
+        "expression": "(http.request.method eq \"POST\" and http.request.uri.path contains \"/api/\" and not http.request.headers[\"content-type\"][0] contains \"application/json\")"
+      },
+      "action": "log",
+      "description": "Log non-JSON API POST requests"
+    }
+  ],
+  "performance_settings": {
+    "mirage": "on",
+    "polish": "lossless",
+    "webp": "on",
+    "brotli": "on",
+    "minify": {
+      "css": "on",
+      "html": "on", 
+      "js": "on"
+    },
+    "rocket_loader": "on",
+    "auto_minify": {
+      "css": true,
+      "html": true,
+      "js": true
+    },
+    "early_hints": "on"
+  },
+  "caching": {
+    "cache_rules": [
+      {
+        "expression": "(http.request.uri.path matches \"^/api/\")",
+        "action": "bypass",
+        "description": "Bypass cache for API endpoints"
+      },
+      {
+        "expression": "(http.request.uri.path matches \"\\.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$\")",
+        "action": "cache",
+        "cache_key": {
+          "cache_by_device_type": false,
+          "ignore_query_strings_order": true
+        },
+        "edge_ttl": {
+          "mode": "override_origin",
+          "default": 2592000,
+          "status_code_ttl": [
+            {
+              "status_code": 200,
+              "value": 2592000
+            },
+            {
+              "status_code": 404,
+              "value": 300
+            }
+          ]
+        },
+        "browser_ttl": {
+          "mode": "override_origin",
+          "default": 31536000
+        },
+        "description": "Cache static assets for 30 days at edge, 1 year in browser"
+      },
+      {
+        "expression": "(http.request.uri.path eq \"/\" or http.request.uri.path matches \"^/(dashboard|projects|designs)\")",
+        "action": "cache",
+        "cache_key": {
+          "cache_by_device_type": true,
+          "custom_key": {
+            "user": {
+              "device_type": true,
+              "geo": true
+            },
+            "query_string": {
+              "exclude": ["utm_*", "fbclid", "gclid"]
+            }
+          }
+        },
+        "edge_ttl": {
+          "mode": "override_origin",
+          "default": 300
+        },
+        "browser_ttl": {
+          "mode": "override_origin", 
+          "default": 0
+        },
+        "description": "Cache application pages for 5 minutes with device/geo variations"
+      }
+    ]
+  },
+  "analytics": {
+    "web_analytics": {
+      "enabled": true,
+      "privacy_compliant": true
+    },
+    "performance_insights": {
+      "enabled": true
+    },
+    "security_insights": {
+      "enabled": true
+    }
+  },
+  "security": {
+    "bot_fight_mode": "on",
+    "challenge_passage": 1800,
+    "security_headers": {
+      "strict_transport_security": {
+        "enabled": true,
+        "max_age": 31536000,
+        "include_subdomains": true,
+        "preload": true
+      },
+      "content_type_options": "nosniff",
+      "referrer_policy": "strict-origin-when-cross-origin",
+      "x_content_type_options": "nosniff",
+      "x_frame_options": "DENY",
+      "x_xss_protection": "1; mode=block"
+    }
+  },
+  "worker_scripts": {
+    "asset-optimization-worker.js": {
+      "description": "Optimizes and transforms assets on-the-fly",
+      "content": "// Cloudflare Worker for asset optimization\n\naddEventListener('fetch', event => {\n  event.respondWith(handleRequest(event.request))\n})\n\nasync function handleRequest(request) {\n  const url = new URL(request.url)\n  \n  // Image optimization\n  if (url.pathname.match(/\\.(jpg|jpeg|png|webp)$/)) {\n    return fetch(request, {\n      cf: {\n        image: {\n          format: 'webp',\n          quality: 85,\n          width: getOptimalWidth(request.headers.get('User-Agent'))\n        }\n      }\n    })\n  }\n  \n  // CSS/JS optimization\n  if (url.pathname.match(/\\.(css|js)$/)) {\n    const response = await fetch(request)\n    let content = await response.text()\n    \n    // Add compression headers\n    const optimizedResponse = new Response(content, {\n      status: response.status,\n      statusText: response.statusText,\n      headers: {\n        ...response.headers,\n        'Cache-Control': 'public, max-age=31536000, immutable',\n        'Content-Encoding': 'br'\n      }\n    })\n    \n    return optimizedResponse\n  }\n  \n  return fetch(request)\n}\n\nfunction getOptimalWidth(userAgent) {\n  if (userAgent && userAgent.includes('Mobile')) {\n    return 768\n  }\n  return 1920\n}"
+    },
+    "api-rate-limiting-worker.js": {
+      "description": "Advanced rate limiting for API endpoints",
+      "content": "// Cloudflare Worker for API rate limiting\n\naddEventListener('fetch', event => {\n  event.respondWith(handleRequest(event.request))\n})\n\nasync function handleRequest(request) {\n  const url = new URL(request.url)\n  const clientIP = request.headers.get('CF-Connecting-IP')\n  const userAgent = request.headers.get('User-Agent')\n  \n  // Skip rate limiting for health checks\n  if (url.pathname === '/health' || url.pathname.includes('/health')) {\n    return fetch(request)\n  }\n  \n  // Different limits for different endpoints\n  const rateLimits = {\n    '/api/v1/auth/': { requests: 10, window: 300 }, // 10 requests per 5 minutes\n    '/api/v1/translation/': { requests: 50, window: 3600 }, // 50 per hour\n    '/api/v1/export/': { requests: 100, window: 3600 }, // 100 per hour\n    'default': { requests: 1000, window: 3600 } // 1000 per hour default\n  }\n  \n  let limit = rateLimits.default\n  for (const [path, pathLimit] of Object.entries(rateLimits)) {\n    if (path !== 'default' && url.pathname.startsWith(path)) {\n      limit = pathLimit\n      break\n    }\n  }\n  \n  const key = `rate_limit:${clientIP}:${url.pathname.split('/')[1]}`\n  const current = await RATE_LIMIT_STORE.get(key)\n  \n  if (current && parseInt(current) >= limit.requests) {\n    return new Response(\n      JSON.stringify({ error: 'Rate limit exceeded', retryAfter: limit.window }),\n      { \n        status: 429,\n        headers: {\n          'Content-Type': 'application/json',\n          'Retry-After': limit.window.toString(),\n          'X-RateLimit-Limit': limit.requests.toString(),\n          'X-RateLimit-Remaining': '0',\n          'X-RateLimit-Reset': (Date.now() + limit.window * 1000).toString()\n        }\n      }\n    )\n  }\n  \n  // Increment counter\n  const newCount = current ? parseInt(current) + 1 : 1\n  await RATE_LIMIT_STORE.put(key, newCount.toString(), { expirationTtl: limit.window })\n  \n  // Add rate limit headers to response\n  const response = await fetch(request)\n  const modifiedResponse = new Response(response.body, {\n    status: response.status,\n    statusText: response.statusText,\n    headers: {\n      ...response.headers,\n      'X-RateLimit-Limit': limit.requests.toString(),\n      'X-RateLimit-Remaining': Math.max(0, limit.requests - newCount).toString(),\n      'X-RateLimit-Reset': (Date.now() + limit.window * 1000).toString()\n    }\n  })\n  \n  return modifiedResponse\n}"
+    }
+  }
+}

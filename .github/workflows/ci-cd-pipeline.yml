@@ -1,0 +1,595 @@
+name: Imagineer CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop, 'feature/*' ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run performance tests nightly
+    - cron: '0 2 * * *'
+
+env:
+  NODE_VERSION: '18'
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+jobs:
+  # Code Quality and Security
+  code-quality:
+    name: Code Quality & Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm run install:all
+
+      - name: Lint code
+        run: npm run lint
+
+      - name: Type check
+        run: |
+          cd client && npm run type-check
+          cd ../services/design-parser && npm run type-check
+          cd ../translation-engine && npm run type-check
+          cd ../export-engine && npm run type-check
+          cd ../collaboration-hub && npm run type-check
+
+      - name: Security audit
+        run: npm audit --audit-level=moderate
+
+      - name: Check for vulnerable dependencies
+        run: |
+          npx audit-ci --moderate
+          cd client && npx audit-ci --moderate
+          
+      - name: Run ESLint with security rules
+        run: |
+          npm run lint:security
+          cd client && npm run lint:security
+
+  # Unit and Integration Tests
+  unit-tests:
+    name: Unit & Integration Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: imagineer_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5433:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6380:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup test database
+        run: |
+          PGPASSWORD=test_password psql -h localhost -p 5433 -U test_user -d imagineer_test -f database/schema.sql
+        env:
+          TEST_DATABASE_URL: postgresql://test_user:test_password@localhost:5433/imagineer_test
+          TEST_REDIS_URL: redis://localhost:6380
+
+      - name: Run client tests
+        run: |
+          cd client
+          npm run test:coverage
+        env:
+          CI: true
+
+      - name: Run service unit tests
+        run: |
+          npm run test:services:coverage
+        env:
+          TEST_DATABASE_URL: postgresql://test_user:test_password@localhost:5433/imagineer_test
+          TEST_REDIS_URL: redis://localhost:6380
+          NODE_ENV: test
+
+      - name: Run integration tests
+        run: |
+          npm run test:integration
+        env:
+          TEST_DATABASE_URL: postgresql://test_user:test_password@localhost:5433/imagineer_test
+          TEST_REDIS_URL: redis://localhost:6380
+          NODE_ENV: test
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage/lcov.info,./client/coverage/lcov.info
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: true
+
+      - name: Coverage Comment
+        uses: 5monkeys/cobertura-action@master
+        if: github.event_name == 'pull_request'
+        with:
+          path: coverage/cobertura-coverage.xml
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          minimum_coverage: 80
+
+  # API Contract Testing
+  contract-tests:
+    name: API Contract Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start test infrastructure
+        run: |
+          docker-compose -f docker-compose.test.yml up -d
+          sleep 30
+
+      - name: Validate OpenAPI specs
+        run: |
+          npx swagger-cli validate infrastructure/api-contracts/design-parser-service.yaml
+          npx swagger-cli validate infrastructure/api-contracts/translation-engine-service.yaml
+          npx swagger-cli validate infrastructure/api-contracts/export-engine-service.yaml
+          npx swagger-cli validate infrastructure/api-contracts/collaboration-hub-service.yaml
+
+      - name: Run contract tests with Prism
+        run: |
+          npm run test:contracts
+
+      - name: Run Postman/Newman tests
+        run: |
+          npx newman run tests/contracts/imagineer-api.postman_collection.json \
+            --environment tests/contracts/test-environment.postman_environment.json \
+            --reporters cli,junit --reporter-junit-export results/newman-results.xml
+
+      - name: Stop test infrastructure
+        if: always()
+        run: docker-compose -f docker-compose.test.yml down
+
+  # End-to-End Tests
+  e2e-tests:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    needs: contract-tests
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright
+        run: |
+          cd client
+          npx playwright install --with-deps
+
+      - name: Start application stack
+        run: |
+          docker-compose up -d
+          sleep 60
+          npm run wait-for-services
+
+      - name: Run E2E tests
+        run: |
+          cd client
+          npm run test:e2e
+        env:
+          CI: true
+          BASE_URL: http://localhost:5173
+
+      - name: Upload E2E test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: playwright-report
+          path: client/playwright-report/
+          retention-days: 30
+
+      - name: Upload E2E test videos
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: playwright-videos
+          path: client/test-results/
+          retention-days: 7
+
+      - name: Stop application stack
+        if: always()
+        run: docker-compose down
+
+  # Performance Tests
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || contains(github.event.head_commit.message, '[perf]')
+    needs: e2e-tests
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Install clinic.js
+        run: npm install -g clinic
+
+      - name: Start application for performance testing
+        run: |
+          docker-compose up -d
+          sleep 60
+
+      - name: Run load tests
+        run: |
+          npm run test:performance:load
+        env:
+          BASE_URL: http://localhost:8090
+          K6_OUT: json=results/load-test-results.json
+
+      - name: Run memory leak tests
+        run: |
+          npm run test:performance:memory
+
+      - name: Analyze performance results
+        run: |
+          node tests/performance/analyze-results.js
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v3
+        with:
+          name: performance-results
+          path: |
+            results/
+            tests/reports/
+          retention-days: 30
+
+      - name: Comment performance results on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const results = JSON.parse(fs.readFileSync('results/performance-summary.json', 'utf8'));
+            
+            const comment = `
+            ## Performance Test Results 🚀
+            
+            **Load Test:**
+            - Average Response Time: ${results.loadTest.avgResponseTime}ms
+            - 95th Percentile: ${results.loadTest.p95ResponseTime}ms
+            - Error Rate: ${results.loadTest.errorRate}%
+            - Requests/sec: ${results.loadTest.requestRate}
+            
+            **Memory Test:**
+            - Services Tested: ${results.memoryTest.servicesCount}
+            - Memory Leaks Detected: ${results.memoryTest.leaksDetected}
+            - Critical Issues: ${results.memoryTest.criticalIssues}
+            
+            ${results.recommendation ? `**Recommendation:** ${results.recommendation}` : ''}
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Stop application
+        if: always()
+        run: docker-compose down
+
+  # Security Tests
+  security-tests:
+    name: Security Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Run npm audit
+        run: |
+          npm audit --audit-level=high --production
+          cd client && npm audit --audit-level=high --production
+
+      - name: OWASP ZAP Baseline Scan
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: zaproxy/action-baseline@v0.7.0
+        with:
+          target: 'http://localhost:5173'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'
+
+  # Build and Push Docker Images
+  build-images:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: [unit-tests, contract-tests]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push client image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./client
+          push: true
+          tags: ghcr.io/${{ github.repository }}/client:${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push service images
+        run: |
+          services=("design-parser" "translation-engine" "export-engine" "collaboration-hub")
+          for service in "${services[@]}"; do
+            docker buildx build \
+              --push \
+              --tag ghcr.io/${{ github.repository }}/${service}:${{ github.sha }} \
+              --tag ghcr.io/${{ github.repository }}/${service}:latest \
+              --cache-from type=gha \
+              --cache-to type=gha,mode=max \
+              ./services/${service}
+          done
+
+  # Deploy to Staging
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [e2e-tests, security-tests, build-images]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    environment:
+      name: staging
+      url: https://staging.imagineer.dev
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to staging
+        run: |
+          echo "Deploying to staging environment..."
+          # Add your deployment logic here
+          # This could be kubectl, terraform, or other deployment tools
+
+      - name: Run smoke tests
+        run: |
+          sleep 30
+          npm run test:smoke -- --baseUrl=https://staging.imagineer.dev
+
+      - name: Notify team
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#deployments'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+
+  # Deploy to Production
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, performance-tests]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://imagineer.dev
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to production
+        run: |
+          echo "Deploying to production environment..."
+          # Add your production deployment logic here
+
+      - name: Run post-deployment tests
+        run: |
+          sleep 60
+          npm run test:smoke -- --baseUrl=https://imagineer.dev
+
+      - name: Update monitoring dashboards
+        run: |
+          # Update Grafana dashboards, alerts, etc.
+          echo "Updating monitoring configuration..."
+
+      - name: Notify team
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#deployments'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+
+  # Cleanup
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    needs: [deploy-production, deploy-staging]
+    if: always()
+    
+    steps:
+      - name: Clean up old images
+        run: |
+          echo "Cleaning up old container images..."
+          # Add logic to clean up old images from registry
+
+      - name: Archive test results
+        run: |
+          echo "Archiving test results..."
+          # Add logic to archive test results
+
+  # Notification Summary
+  notify-summary:
+    name: Notify Summary
+    runs-on: ubuntu-latest
+    needs: [deploy-production, performance-tests]
+    if: always()
+    
+    steps:
+      - name: Calculate success rate
+        id: success
+        run: |
+          total_jobs=8
+          success_count=0
+          
+          # Count successful jobs (simplified)
+          if [[ "${{ needs.deploy-production.result }}" == "success" ]]; then
+            ((success_count++))
+          fi
+          if [[ "${{ needs.performance-tests.result }}" == "success" ]]; then
+            ((success_count++))
+          fi
+          # Add other job checks...
+          
+          success_rate=$((success_count * 100 / total_jobs))
+          echo "success_rate=$success_rate" >> $GITHUB_OUTPUT
+
+      - name: Send summary notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: custom
+          custom_payload: |
+            {
+              "attachments": [{
+                "color": "${{ steps.success.outputs.success_rate >= 80 && 'good' || 'danger' }}",
+                "blocks": [{
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "🚀 Imagineer CI/CD Pipeline Summary"
+                  }
+                }, {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Branch:*\n${{ github.ref_name }}"
+                    },
+                    {
+                      "type": "mrkdwn", 
+                      "text": "*Success Rate:*\n${{ steps.success.outputs.success_rate }}%"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Commit:*\n<${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|${{ github.sha }}>"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Author:*\n${{ github.actor }}"
+                    }
+                  ]
+                }]
+              }]
+            }
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}

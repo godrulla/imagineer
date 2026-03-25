@@ -1,0 +1,72 @@
+elite_agents:
+  version: '2.0'
+  system_type: Global Elite Agents
+  installed_agents:
+  - ARQ
+  - SAGE
+  - ZEN
+  - ORC
+  - APEX
+  project_context:
+    project_name: imagineer
+    project_path: /Users/mando/Desktop/imagineer
+    detected_types:
+    - enterprise-architecture
+    has_git: false
+    frameworks: []
+    complexity_level: advanced
+    team_indicators:
+      size: medium
+      roles:
+      - technical-writer
+      - qa-engineer
+    created_at: '2025-08-17T10:11:19.769920'
+  agent_details:
+    ARQ:
+      nickname: '*arq'
+      full_name: Visionary Architect
+      purpose: Building tomorrow's systems with today's vision
+      expertise:
+      - system-architecture
+      - cloud-native
+      - scalability
+      - microservices
+    SAGE:
+      nickname: '*sage'
+      full_name: Strategic Oracle
+      purpose: Seeing patterns others miss, predicting what others can't
+      expertise:
+      - market-analysis
+      - strategic-planning
+      - competitive-intelligence
+      - forecasting
+    ZEN:
+      nickname: '*zen'
+      full_name: Code Zen Master
+      purpose: Writing code that transcends mere functionality
+      expertise:
+      - clean-code
+      - algorithms
+      - refactoring
+      - code-quality
+    ORC:
+      nickname: '*orc'
+      full_name: Master Orchestrator
+      purpose: Conducting symphonies of complex workflows
+      expertise:
+      - workflow-automation
+      - project-coordination
+      - resource-optimization
+    APEX:
+      nickname: '*apex'
+      full_name: Mobile Web Virtuoso
+      purpose: Crafting experiences that feel native, perform lightning-fast, and
+        delight users across every device
+      expertise:
+      - pwa
+      - mobile-first
+      - touch-interactions
+      - performance
+      - react-native-web
+  installation_date: '2025-08-17T10:11:19.769925'
+  enhanced: true

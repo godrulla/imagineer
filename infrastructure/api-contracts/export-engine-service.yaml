@@ -1,0 +1,1954 @@
+openapi: 3.0.3
+info:
+  title: Imagineer Export Engine Service API
+  description: |
+    The Export Engine Service handles the generation and delivery of various output formats 
+    from translated design data. It supports multiple export formats including markdown, 
+    JSON schemas, HTML, and custom formats, with flexible storage and delivery options.
+    
+    ## Key Capabilities
+    - Multi-format export generation (Markdown, JSON, YAML, HTML, PDF, etc.)
+    - Template-based export customization
+    - Batch export processing
+    - Storage management and CDN integration
+    - Export versioning and history
+    - Custom format plugins
+    
+    ## Authentication
+    All endpoints require organization-level authentication via API key or JWT token.
+    Multi-tenant access is enforced at the organization level.
+  version: "1.0.0"
+  contact:
+    name: Imagineer API Support
+    url: https://docs.imagineer.dev
+    email: api-support@imagineer.dev
+  license:
+    name: Proprietary
+    url: https://imagineer.dev/license
+
+servers:
+  - url: https://api.imagineer.dev/v1/export
+    description: Production API
+  - url: https://staging-api.imagineer.dev/v1/export
+    description: Staging API
+  - url: http://localhost:8003/v1
+    description: Local Development
+
+security:
+  - apiKey: []
+  - bearerAuth: []
+
+paths:
+  # ============================================================================
+  # HEALTH & STATUS
+  # ============================================================================
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Returns service health status and storage provider availability
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /status:
+    get:
+      summary: Detailed service status
+      description: Returns detailed service status including storage and CDN health
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: Detailed service status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceStatus'
+
+  # ============================================================================
+  # EXPORT JOBS
+  # ============================================================================
+  /jobs:
+    get:
+      summary: List export jobs
+      description: Retrieve paginated list of export jobs
+      tags: [Export Jobs]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SortParam'
+        - name: project_id
+          in: query
+          description: Filter by project ID
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          description: Filter by job status
+          schema:
+            $ref: '#/components/schemas/JobStatus'
+        - name: export_format
+          in: query
+          description: Filter by export format
+          schema:
+            $ref: '#/components/schemas/ExportFormat'
+        - name: created_after
+          in: query
+          description: Filter jobs created after date
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: List of export jobs
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ExportJob'
+
+    post:
+      summary: Create export job
+      description: Create a new export job to generate output from translated data
+      tags: [Export Jobs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExportJobRequest'
+      responses:
+        '201':
+          description: Export job created and queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportJob'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /jobs/{jobId}:
+    parameters:
+      - $ref: '#/components/parameters/JobIdParam'
+    
+    get:
+      summary: Get export job details
+      description: Retrieve detailed information about an export job
+      tags: [Export Jobs]
+      responses:
+        '200':
+          description: Export job details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportJobDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Cancel export job
+      description: Cancel a pending or running export job
+      tags: [Export Jobs]
+      responses:
+        '204':
+          description: Job cancelled successfully
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /jobs/{jobId}/retry:
+    parameters:
+      - $ref: '#/components/parameters/JobIdParam'
+    
+    post:
+      summary: Retry export job
+      description: Retry a failed export job
+      tags: [Export Jobs]
+      responses:
+        '202':
+          description: Job retry initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportJob'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================================================
+  # DIRECT EXPORT
+  # ============================================================================
+  /generate:
+    post:
+      summary: Direct export generation
+      description: Generate export immediately without creating a persistent job
+      tags: [Direct Export]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DirectExportRequest'
+      responses:
+        '200':
+          description: Export generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportResult'
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            text/plain:
+              schema:
+                type: string
+            text/markdown:
+              schema:
+                type: string
+            text/html:
+              schema:
+                type: string
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '408':
+          description: Export generation timeout
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+  /batch:
+    post:
+      summary: Batch export generation
+      description: Generate multiple exports in a single batch operation
+      tags: [Direct Export]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchExportRequest'
+      responses:
+        '202':
+          description: Batch export job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchExportResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # ============================================================================
+  # EXPORT TEMPLATES
+  # ============================================================================
+  /templates:
+    get:
+      summary: List export templates
+      description: Retrieve paginated list of export templates
+      tags: [Export Templates]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: export_format
+          in: query
+          description: Filter by export format
+          schema:
+            $ref: '#/components/schemas/ExportFormat'
+        - name: category
+          in: query
+          description: Filter by template category
+          schema:
+            type: string
+        - name: is_public
+          in: query
+          description: Filter by public/private templates
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: List of export templates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ExportTemplate'
+
+    post:
+      summary: Create export template
+      description: Create a new export template
+      tags: [Export Templates]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExportTemplateRequest'
+      responses:
+        '201':
+          description: Template created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportTemplate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /templates/{templateId}:
+    parameters:
+      - $ref: '#/components/parameters/TemplateIdParam'
+    
+    get:
+      summary: Get export template
+      description: Retrieve detailed information about an export template
+      tags: [Export Templates]
+      responses:
+        '200':
+          description: Export template details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportTemplateDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      summary: Update export template
+      description: Update export template configuration
+      tags: [Export Templates]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateExportTemplateRequest'
+      responses:
+        '200':
+          description: Template updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportTemplate'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Delete export template
+      description: Soft delete an export template
+      tags: [Export Templates]
+      responses:
+        '204':
+          description: Template deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Cannot delete template that is in use
+
+  /templates/{templateId}/test:
+    parameters:
+      - $ref: '#/components/parameters/TemplateIdParam'
+    
+    post:
+      summary: Test export template
+      description: Test an export template with sample data
+      tags: [Export Templates]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestExportTemplateRequest'
+      responses:
+        '200':
+          description: Template test results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportTemplateTestResponse'
+
+  # ============================================================================
+  # EXPORT ARTIFACTS
+  # ============================================================================
+  /artifacts:
+    get:
+      summary: List export artifacts
+      description: Retrieve paginated list of generated export artifacts
+      tags: [Export Artifacts]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: project_id
+          in: query
+          description: Filter by project ID
+          schema:
+            type: string
+            format: uuid
+        - name: export_format
+          in: query
+          description: Filter by export format
+          schema:
+            $ref: '#/components/schemas/ExportFormat'
+        - name: created_after
+          in: query
+          description: Filter artifacts created after date
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: List of export artifacts
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ExportArtifact'
+
+  /artifacts/{artifactId}:
+    parameters:
+      - $ref: '#/components/parameters/ArtifactIdParam'
+    
+    get:
+      summary: Get export artifact
+      description: Retrieve detailed information about an export artifact
+      tags: [Export Artifacts]
+      responses:
+        '200':
+          description: Export artifact details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportArtifactDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Delete export artifact
+      description: Delete an export artifact and its stored files
+      tags: [Export Artifacts]
+      responses:
+        '204':
+          description: Artifact deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /artifacts/{artifactId}/download:
+    parameters:
+      - $ref: '#/components/parameters/ArtifactIdParam'
+    
+    get:
+      summary: Download export artifact
+      description: Download the exported file content
+      tags: [Export Artifacts]
+      parameters:
+        - name: format
+          in: query
+          description: Specific format to download (if artifact contains multiple)
+          schema:
+            $ref: '#/components/schemas/ExportFormat'
+      responses:
+        '200':
+          description: Export file content
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: Attachment filename
+            Content-Type:
+              schema:
+                type: string
+              description: MIME type of the exported content
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            text/plain:
+              schema:
+                type: string
+            text/markdown:
+              schema:
+                type: string
+            text/html:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /artifacts/{artifactId}/share:
+    parameters:
+      - $ref: '#/components/parameters/ArtifactIdParam'
+    
+    post:
+      summary: Create shareable link
+      description: Create a shareable public link for an export artifact
+      tags: [Export Artifacts]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateShareLinkRequest'
+      responses:
+        '201':
+          description: Share link created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareLinkResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ============================================================================
+  # STORAGE MANAGEMENT
+  # ============================================================================
+  /storage/usage:
+    get:
+      summary: Get storage usage
+      description: Retrieve storage usage statistics for the organization
+      tags: [Storage]
+      responses:
+        '200':
+          description: Storage usage statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StorageUsage'
+
+  /storage/cleanup:
+    post:
+      summary: Cleanup old exports
+      description: Remove old export artifacts based on retention policies
+      tags: [Storage]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StorageCleanupRequest'
+      responses:
+        '202':
+          description: Cleanup job initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleanupJobResponse'
+
+  # ============================================================================
+  # FORMAT SUPPORT
+  # ============================================================================
+  /formats:
+    get:
+      summary: List supported formats
+      description: Get list of supported export formats and their capabilities
+      tags: [Formats]
+      responses:
+        '200':
+          description: List of supported export formats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ExportFormatInfo'
+
+  /formats/{format}/validate:
+    parameters:
+      - name: format
+        in: path
+        required: true
+        description: Export format to validate
+        schema:
+          $ref: '#/components/schemas/ExportFormat'
+    
+    post:
+      summary: Validate format template
+      description: Validate a template for a specific export format
+      tags: [Formats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateFormatRequest'
+      responses:
+        '200':
+          description: Validation results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FormatValidationResponse'
+
+  # ============================================================================
+  # WEBHOOKS
+  # ============================================================================
+  /webhooks:
+    get:
+      summary: List export webhooks
+      description: Retrieve list of configured export completion webhooks
+      tags: [Webhooks]
+      responses:
+        '200':
+          description: List of webhooks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ExportWebhook'
+
+    post:
+      summary: Create export webhook
+      description: Create a new webhook for export completion notifications
+      tags: [Webhooks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExportWebhookRequest'
+      responses:
+        '201':
+          description: Webhook created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportWebhook'
+
+  /webhooks/{webhookId}:
+    parameters:
+      - name: webhookId
+        in: path
+        required: true
+        description: Webhook identifier
+        schema:
+          type: string
+          format: uuid
+    
+    get:
+      summary: Get webhook details
+      description: Retrieve detailed information about a webhook
+      tags: [Webhooks]
+      responses:
+        '200':
+          description: Webhook details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportWebhookDetail'
+
+    put:
+      summary: Update webhook
+      description: Update webhook configuration
+      tags: [Webhooks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateExportWebhookRequest'
+      responses:
+        '200':
+          description: Webhook updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportWebhook'
+
+    delete:
+      summary: Delete webhook
+      description: Delete a webhook configuration
+      tags: [Webhooks]
+      responses:
+        '204':
+          description: Webhook deleted successfully
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+# ============================================================================
+# COMPONENTS
+# ============================================================================
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Organization API key for authentication
+    
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for user authentication
+
+  parameters:
+    JobIdParam:
+      name: jobId
+      in: path
+      required: true
+      description: Unique job identifier
+      schema:
+        type: string
+        format: uuid
+    
+    TemplateIdParam:
+      name: templateId
+      in: path
+      required: true
+      description: Unique template identifier
+      schema:
+        type: string
+        format: uuid
+    
+    ArtifactIdParam:
+      name: artifactId
+      in: path
+      required: true
+      description: Unique artifact identifier
+      schema:
+        type: string
+        format: uuid
+    
+    PageParam:
+      name: page
+      in: query
+      description: Page number for pagination
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    
+    LimitParam:
+      name: limit
+      in: query
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    
+    SortParam:
+      name: sort
+      in: query
+      description: Sort order (field:direction)
+      schema:
+        type: string
+        pattern: '^[a-zA-Z_][a-zA-Z0-9_]*:(asc|desc)$'
+        default: 'created_at:desc'
+
+  schemas:
+    # ========================================================================
+    # CORE DATA MODELS
+    # ========================================================================
+    ExportJob:
+      type: object
+      required: [id, organization_id, project_id, export_format, status, created_at, created_by]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique job identifier
+        organization_id:
+          type: string
+          format: uuid
+          description: Organization that owns this job
+        project_id:
+          type: string
+          format: uuid
+          description: Associated project
+        translation_result_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Source translation result
+        template_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Export template used
+        job_name:
+          type: string
+          maxLength: 255
+          nullable: true
+          description: Custom job name
+        export_format:
+          $ref: '#/components/schemas/ExportFormat'
+        export_options:
+          type: object
+          description: Export-specific options and configuration
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 10
+          default: 5
+        progress_percentage:
+          type: integer
+          minimum: 0
+          maximum: 100
+        retry_count:
+          type: integer
+          minimum: 0
+          default: 0
+        max_retries:
+          type: integer
+          minimum: 0
+          default: 3
+        queued_at:
+          type: string
+          format: date-time
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_seconds:
+          type: number
+          minimum: 0
+          nullable: true
+        output_size_bytes:
+          type: integer
+          minimum: 0
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        error_code:
+          type: string
+          nullable: true
+        callback_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Webhook URL for completion notification
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+          format: uuid
+
+    ExportJobDetail:
+      allOf:
+        - $ref: '#/components/schemas/ExportJob'
+        - type: object
+          properties:
+            input_data:
+              type: object
+              description: Input data for export
+            output_artifacts:
+              type: array
+              items:
+                $ref: '#/components/schemas/ExportArtifact'
+              description: Generated export artifacts
+            execution_logs:
+              type: array
+              items:
+                $ref: '#/components/schemas/ExecutionLog'
+              description: Job execution logs
+            metrics:
+              $ref: '#/components/schemas/ExportJobMetrics'
+
+    ExportTemplate:
+      type: object
+      required: [id, organization_id, name, export_format, template_content, status, created_at, created_by]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 255
+          description: Template display name
+        description:
+          type: string
+          nullable: true
+          description: Template description
+        category:
+          type: string
+          maxLength: 100
+          nullable: true
+          description: Template category
+        export_format:
+          $ref: '#/components/schemas/ExportFormat'
+        template_content:
+          type: string
+          description: Template content with placeholders
+        template_engine:
+          type: string
+          enum: [handlebars, jinja2, mustache, liquid, custom]
+          default: handlebars
+          description: Template engine to use
+        variables:
+          type: object
+          description: Template variable definitions
+        default_options:
+          type: object
+          description: Default export options
+        validation_schema:
+          type: object
+          description: JSON schema for input validation
+        output_filename_pattern:
+          type: string
+          maxLength: 255
+          description: Pattern for generated filenames
+        is_public:
+          type: boolean
+          default: false
+          description: Whether template is publicly available
+        is_system_template:
+          type: boolean
+          default: false
+          description: Whether this is a system-provided template
+        usage_count:
+          type: integer
+          minimum: 0
+          description: Number of times template has been used
+        version:
+          type: integer
+          minimum: 1
+          default: 1
+        parent_template_id:
+          type: string
+          format: uuid
+          nullable: true
+        status:
+          $ref: '#/components/schemas/TemplateStatus'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+          format: uuid
+
+    ExportTemplateDetail:
+      allOf:
+        - $ref: '#/components/schemas/ExportTemplate'
+        - type: object
+          properties:
+            usage_stats:
+              $ref: '#/components/schemas/TemplateUsageStats'
+            recent_exports:
+              type: array
+              items:
+                $ref: '#/components/schemas/ExportJob'
+              description: Recent exports using this template
+            sample_output:
+              type: string
+              description: Sample output using example data
+
+    ExportArtifact:
+      type: object
+      required: [id, export_job_id, filename, export_format, file_size_bytes, storage_path, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        export_job_id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+          maxLength: 500
+          description: Generated filename
+        export_format:
+          $ref: '#/components/schemas/ExportFormat'
+        file_size_bytes:
+          type: integer
+          minimum: 0
+        mime_type:
+          type: string
+          maxLength: 100
+        file_hash:
+          type: string
+          maxLength: 64
+          description: SHA256 hash of file content
+        storage_provider:
+          type: string
+          enum: [s3, gcs, azure, local]
+          description: Storage provider used
+        storage_path:
+          type: string
+          maxLength: 1000
+          description: Storage path/key
+        storage_bucket:
+          type: string
+          maxLength: 255
+          nullable: true
+        public_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Public download URL
+        cdn_url:
+          type: string
+          format: uri
+          nullable: true
+          description: CDN-accelerated URL
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Expiration timestamp for temporary URLs
+        download_count:
+          type: integer
+          minimum: 0
+          default: 0
+        metadata:
+          type: object
+          description: Additional artifact metadata
+        created_at:
+          type: string
+          format: date-time
+
+    ExportArtifactDetail:
+      allOf:
+        - $ref: '#/components/schemas/ExportArtifact'
+        - type: object
+          properties:
+            job_details:
+              $ref: '#/components/schemas/ExportJob'
+            share_links:
+              type: array
+              items:
+                $ref: '#/components/schemas/ShareLink'
+              description: Active share links for this artifact
+            download_history:
+              type: array
+              items:
+                $ref: '#/components/schemas/DownloadEvent'
+              description: Recent download events
+
+    ExportResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        export_format:
+          $ref: '#/components/schemas/ExportFormat'
+        content:
+          type: string
+          description: Generated content (for text formats)
+        download_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Download URL for binary formats
+        filename:
+          type: string
+          description: Suggested filename
+        file_size_bytes:
+          type: integer
+          minimum: 0
+        generation_time_ms:
+          type: integer
+          minimum: 0
+        metadata:
+          type: object
+
+    # ========================================================================
+    # REQUEST MODELS
+    # ========================================================================
+    CreateExportJobRequest:
+      type: object
+      required: [project_id, export_format, input_data]
+      properties:
+        project_id:
+          type: string
+          format: uuid
+        translation_result_id:
+          type: string
+          format: uuid
+          nullable: true
+        template_id:
+          type: string
+          format: uuid
+          nullable: true
+        job_name:
+          type: string
+          maxLength: 255
+          nullable: true
+        export_format:
+          $ref: '#/components/schemas/ExportFormat'
+        export_options:
+          type: object
+          description: Format-specific export options
+        input_data:
+          type: object
+          description: Data to export
+        filename_pattern:
+          type: string
+          maxLength: 255
+          nullable: true
+          description: Custom filename pattern
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 10
+          default: 5
+        callback_url:
+          type: string
+          format: uri
+          nullable: true
+
+    DirectExportRequest:
+      type: object
+      required: [export_format, input_data]
+      properties:
+        template_id:
+          type: string
+          format: uuid
+          nullable: true
+        export_format:
+          $ref: '#/components/schemas/ExportFormat'
+        export_options:
+          type: object
+        input_data:
+          type: object
+        filename:
+          type: string
+          maxLength: 255
+          nullable: true
+        return_content:
+          type: boolean
+          default: true
+          description: Whether to return content inline or as download URL
+        timeout_seconds:
+          type: integer
+          minimum: 5
+          maximum: 300
+          default: 60
+
+    BatchExportRequest:
+      type: object
+      required: [exports]
+      properties:
+        exports:
+          type: array
+          items:
+            $ref: '#/components/schemas/DirectExportRequest'
+          minItems: 1
+          maxItems: 50
+        batch_name:
+          type: string
+          maxLength: 255
+          nullable: true
+        callback_url:
+          type: string
+          format: uri
+          nullable: true
+
+    CreateExportTemplateRequest:
+      type: object
+      required: [name, export_format, template_content]
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+        category:
+          type: string
+          maxLength: 100
+          nullable: true
+        export_format:
+          $ref: '#/components/schemas/ExportFormat'
+        template_content:
+          type: string
+        template_engine:
+          type: string
+          enum: [handlebars, jinja2, mustache, liquid, custom]
+          default: handlebars
+        variables:
+          type: object
+        default_options:
+          type: object
+        validation_schema:
+          type: object
+        output_filename_pattern:
+          type: string
+          maxLength: 255
+        is_public:
+          type: boolean
+          default: false
+
+    UpdateExportTemplateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+        category:
+          type: string
+          maxLength: 100
+          nullable: true
+        template_content:
+          type: string
+        template_engine:
+          type: string
+          enum: [handlebars, jinja2, mustache, liquid, custom]
+        variables:
+          type: object
+        default_options:
+          type: object
+        validation_schema:
+          type: object
+        output_filename_pattern:
+          type: string
+          maxLength: 255
+        is_public:
+          type: boolean
+
+    TestExportTemplateRequest:
+      type: object
+      required: [test_data]
+      properties:
+        test_data:
+          type: object
+          description: Test input data
+        export_options:
+          type: object
+          description: Export options for testing
+
+    CreateShareLinkRequest:
+      type: object
+      properties:
+        expires_in_hours:
+          type: integer
+          minimum: 1
+          maximum: 8760
+          default: 24
+          description: Link expiration in hours
+        password:
+          type: string
+          minLength: 8
+          maxLength: 50
+          nullable: true
+          description: Optional password protection
+        download_limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          nullable: true
+          description: Maximum number of downloads
+        allowed_ips:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: IP addresses allowed to access the link
+
+    StorageCleanupRequest:
+      type: object
+      properties:
+        older_than_days:
+          type: integer
+          minimum: 1
+          default: 30
+          description: Delete artifacts older than this many days
+        format_filter:
+          $ref: '#/components/schemas/ExportFormat'
+        size_threshold_mb:
+          type: integer
+          minimum: 1
+          nullable: true
+          description: Only delete artifacts larger than this size
+        dry_run:
+          type: boolean
+          default: false
+          description: Preview what would be deleted without actually deleting
+
+    ValidateFormatRequest:
+      type: object
+      required: [template_content]
+      properties:
+        template_content:
+          type: string
+        template_engine:
+          type: string
+          enum: [handlebars, jinja2, mustache, liquid, custom]
+        sample_data:
+          type: object
+          nullable: true
+
+    CreateExportWebhookRequest:
+      type: object
+      required: [url, events]
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+            enum: [export_completed, export_failed, export_started, batch_completed]
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        secret:
+          type: string
+          maxLength: 255
+          nullable: true
+        active:
+          type: boolean
+          default: true
+
+    UpdateExportWebhookRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+            enum: [export_completed, export_failed, export_started, batch_completed]
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        secret:
+          type: string
+          maxLength: 255
+          nullable: true
+        active:
+          type: boolean
+
+    # ========================================================================
+    # RESPONSE MODELS
+    # ========================================================================
+    BatchExportResponse:
+      type: object
+      properties:
+        batch_id:
+          type: string
+          format: uuid
+        total_exports:
+          type: integer
+        estimated_completion_time:
+          type: string
+          format: date-time
+        status_url:
+          type: string
+          format: uri
+        individual_job_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    ShareLinkResponse:
+      type: object
+      properties:
+        share_id:
+          type: string
+          format: uuid
+        share_url:
+          type: string
+          format: uri
+        expires_at:
+          type: string
+          format: date-time
+        password_protected:
+          type: boolean
+        download_limit:
+          type: integer
+          nullable: true
+
+    CleanupJobResponse:
+      type: object
+      properties:
+        cleanup_job_id:
+          type: string
+          format: uuid
+        estimated_items:
+          type: integer
+        estimated_size_mb:
+          type: number
+        status_url:
+          type: string
+          format: uri
+
+    ExportTemplateTestResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        generated_content:
+          type: string
+        validation_errors:
+          type: array
+          items:
+            type: string
+        performance_metrics:
+          type: object
+          properties:
+            generation_time_ms:
+              type: integer
+            output_size_bytes:
+              type: integer
+
+    FormatValidationResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              line:
+                type: integer
+              column:
+                type: integer
+              message:
+                type: string
+        warnings:
+          type: array
+          items:
+            type: object
+            properties:
+              line:
+                type: integer
+              column:
+                type: integer
+              message:
+                type: string
+
+    ExportFormatInfo:
+      type: object
+      properties:
+        format:
+          $ref: '#/components/schemas/ExportFormat'
+        name:
+          type: string
+        description:
+          type: string
+        mime_type:
+          type: string
+        file_extension:
+          type: string
+        supports_templates:
+          type: boolean
+        supports_binary:
+          type: boolean
+        max_size_mb:
+          type: integer
+        template_engines:
+          type: array
+          items:
+            type: string
+        sample_template:
+          type: string
+
+    StorageUsage:
+      type: object
+      properties:
+        total_size_bytes:
+          type: integer
+        total_artifacts:
+          type: integer
+        by_format:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              count:
+                type: integer
+              size_bytes:
+                type: integer
+        by_age:
+          type: object
+          properties:
+            last_24h:
+              type: object
+              properties:
+                count:
+                  type: integer
+                size_bytes:
+                  type: integer
+            last_7d:
+              type: object
+              properties:
+                count:
+                  type: integer
+                size_bytes:
+                  type: integer
+            last_30d:
+              type: object
+              properties:
+                count:
+                  type: integer
+                size_bytes:
+                  type: integer
+            older:
+              type: object
+              properties:
+                count:
+                  type: integer
+                size_bytes:
+                  type: integer
+        quota_limit_bytes:
+          type: integer
+          nullable: true
+        quota_used_percentage:
+          type: number
+          nullable: true
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        uptime_seconds:
+          type: integer
+
+    ServiceStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        storage_providers:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+                enum: [healthy, unhealthy]
+              response_time_ms:
+                type: number
+              last_check:
+                type: string
+                format: date-time
+        export_engines:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+                enum: [available, unavailable]
+              last_check:
+                type: string
+                format: date-time
+        queue_status:
+          type: object
+          properties:
+            pending_jobs:
+              type: integer
+            processing_jobs:
+              type: integer
+            queue_depth:
+              type: integer
+        metrics:
+          type: object
+          properties:
+            exports_per_minute:
+              type: number
+            average_export_time_ms:
+              type: number
+            storage_usage_gb:
+              type: number
+            memory_usage_mb:
+              type: number
+            cpu_usage_percent:
+              type: number
+
+    # ========================================================================
+    # UTILITY MODELS
+    # ========================================================================
+    PaginatedResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          description: Array of data items
+        pagination:
+          type: object
+          properties:
+            page:
+              type: integer
+              minimum: 1
+            limit:
+              type: integer
+              minimum: 1
+            total:
+              type: integer
+              minimum: 0
+            pages:
+              type: integer
+              minimum: 0
+            has_next:
+              type: boolean
+            has_prev:
+              type: boolean
+
+    # ========================================================================
+    # ENUMS
+    # ========================================================================
+    ExportFormat:
+      type: string
+      enum: [markdown, json, yaml, html, pdf, docx, txt, xml, csv, svg, png, zip, custom]
+      description: Supported export formats
+
+    JobStatus:
+      type: string
+      enum: [pending, queued, processing, completed, failed, cancelled, timeout]
+      description: Job execution status
+
+    TemplateStatus:
+      type: string
+      enum: [active, inactive, deprecated, archived]
+      description: Template status
+
+    # ========================================================================
+    # SUPPORTING MODELS
+    # ========================================================================
+    ExportJobMetrics:
+      type: object
+      properties:
+        queue_time_ms:
+          type: integer
+        processing_time_ms:
+          type: integer
+        template_render_time_ms:
+          type: integer
+        storage_upload_time_ms:
+          type: integer
+        total_time_ms:
+          type: integer
+        output_size_bytes:
+          type: integer
+        compression_ratio:
+          type: number
+          nullable: true
+
+    TemplateUsageStats:
+      type: object
+      properties:
+        total_usage:
+          type: integer
+        successful_exports:
+          type: integer
+        failed_exports:
+          type: integer
+        average_generation_time_ms:
+          type: number
+        last_used:
+          type: string
+          format: date-time
+
+    ExecutionLog:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        level:
+          type: string
+          enum: [debug, info, warning, error]
+        message:
+          type: string
+        details:
+          type: object
+
+    ShareLink:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        share_url:
+          type: string
+          format: uri
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        download_count:
+          type: integer
+        download_limit:
+          type: integer
+          nullable: true
+        password_protected:
+          type: boolean
+        active:
+          type: boolean
+
+    DownloadEvent:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        ip_address:
+          type: string
+        user_agent:
+          type: string
+        download_method:
+          type: string
+          enum: [direct, share_link, api]
+        file_size_bytes:
+          type: integer
+
+    ExportWebhook:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+        active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        last_triggered:
+          type: string
+          format: date-time
+          nullable: true
+        success_count:
+          type: integer
+        failure_count:
+          type: integer
+
+    ExportWebhookDetail:
+      allOf:
+        - $ref: '#/components/schemas/ExportWebhook'
+        - type: object
+          properties:
+            headers:
+              type: object
+              additionalProperties:
+                type: string
+            recent_deliveries:
+              type: array
+              items:
+                type: object
+                properties:
+                  timestamp:
+                    type: string
+                    format: date-time
+                  event:
+                    type: string
+                  status_code:
+                    type: integer
+                  response_time_ms:
+                    type: integer
+                  success:
+                    type: boolean
+
+    # ========================================================================
+    # ERROR MODELS
+    # ========================================================================
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Error code for programmatic handling
+            message:
+              type: string
+              description: Human-readable error message
+            details:
+              type: object
+              description: Additional error details
+            request_id:
+              type: string
+              description: Request ID for tracking
+
+    ValidationError:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          properties:
+            error:
+              type: object
+              properties:
+                validation_errors:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      field:
+                        type: string
+                      message:
+                        type: string
+                      value:
+                        description: The invalid value
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid input parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationError'
+
+    Unauthorized:
+      description: Unauthorized - authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Forbidden:
+      description: Forbidden - insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Conflict:
+      description: Conflict - resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    RateLimitExceeded:
+      description: Rate limit exceeded
+      headers:
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+          description: Request limit per time window
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+          description: Remaining requests in current window
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+          description: Time when rate limit resets (Unix timestamp)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+# ============================================================================
+# TAGS
+# ============================================================================
+tags:
+  - name: Health
+    description: Service health and status endpoints
+  - name: Export Jobs
+    description: Asynchronous export job management
+  - name: Direct Export
+    description: Immediate export generation
+  - name: Export Templates
+    description: Export template management
+  - name: Export Artifacts
+    description: Generated export file management
+  - name: Storage
+    description: Storage management and cleanup
+  - name: Formats
+    description: Export format support and validation
+  - name: Webhooks
+    description: Export completion webhook management
+
+# ============================================================================
+# EXTERNAL DOCS
+# ============================================================================
+externalDocs:
+  description: Imagineer Export Engine Service Documentation
+  url: https://docs.imagineer.dev/api/export-engine

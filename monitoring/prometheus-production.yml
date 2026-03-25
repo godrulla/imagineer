@@ -1,0 +1,229 @@
+# Prometheus Production Configuration for Imagineer Platform
+# Comprehensive monitoring with alerting rules and performance optimization
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+  
+  # Labels attached to metrics
+  external_labels:
+    cluster: 'imagineer-production'
+    environment: 'production'
+    datacenter: 'primary'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+      timeout: 10s
+      api_version: v1
+
+# Rules files
+rule_files:
+  - "/etc/prometheus/alerts/*.yml"
+
+# Scrape configurations
+scrape_configs:
+  # =============================================================================
+  # PROMETHEUS SELF-MONITORING
+  # =============================================================================
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # =============================================================================
+  # IMAGINEER MICROSERVICES
+  # =============================================================================
+  
+  # Design Parser Service
+  - job_name: 'design-parser'
+    static_configs:
+      - targets: ['design-parser:8001']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    params:
+      format: ['prometheus']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: design-parser:8001
+
+  # Translation Engine Service
+  - job_name: 'translation-engine'
+    static_configs:
+      - targets: ['translation-engine:8002']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '(.*):(.*)'
+        replacement: '${1}'
+
+  # Export Engine Service
+  - job_name: 'export-engine'
+    static_configs:
+      - targets: ['export-engine:8003']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+
+  # Collaboration Hub Service
+  - job_name: 'collaboration-hub'
+    static_configs:
+      - targets: ['collaboration-hub:8004']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+
+  # =============================================================================
+  # INFRASTRUCTURE SERVICES
+  # =============================================================================
+  
+  # PostgreSQL Database Metrics
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # Redis Cache Metrics
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # Kong API Gateway Metrics
+  - job_name: 'kong'
+    static_configs:
+      - targets: ['kong:8001']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # =============================================================================
+  # SYSTEM & NODE MONITORING
+  # =============================================================================
+  
+  # Node Exporter for system metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # cAdvisor for container metrics
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metrics_path: '/metrics'
+
+  # =============================================================================
+  # APPLICATION PERFORMANCE MONITORING
+  # =============================================================================
+  
+  # Custom application metrics
+  - job_name: 'app-metrics'
+    static_configs:
+      - targets: 
+        - 'design-parser:8001'
+        - 'translation-engine:8002'
+        - 'export-engine:8003'
+        - 'collaboration-hub:8004'
+    metrics_path: '/metrics/custom'
+    scrape_interval: 60s
+    honor_labels: true
+
+  # =============================================================================
+  # BLACKBOX MONITORING - EXTERNAL ENDPOINTS
+  # =============================================================================
+  
+  # HTTP endpoint monitoring
+  - job_name: 'blackbox-http'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+        - http://nginx/health
+        - https://imagineer.com/health
+        - https://api.imagineer.com/health
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  # =============================================================================
+  # THIRD-PARTY SERVICE MONITORING
+  # =============================================================================
+  
+  # Figma API health check
+  - job_name: 'figma-api'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+        - https://api.figma.com/v1/me
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+    scrape_interval: 120s
+
+# =============================================================================
+# STORAGE CONFIGURATION
+# =============================================================================
+storage:
+  tsdb:
+    path: /prometheus
+    retention.time: 30d
+    retention.size: 20GB
+    
+    # Compaction settings for performance
+    min-block-duration: 2h
+    max-block-duration: 25h
+    wal-compression: true
+    
+    # Query performance optimization
+    allow-overlapping-blocks: false
+    no-lockfile: false
+
+# =============================================================================
+# REMOTE WRITE (Optional - for long-term storage)
+# =============================================================================
+# remote_write:
+#   - url: "https://your-remote-storage/api/v1/write"
+#     queue_config:
+#       max_samples_per_send: 1000
+#       max_shards: 200
+#       capacity: 2500
+
+# =============================================================================
+# TRACING INTEGRATION
+# =============================================================================
+tracing:
+  endpoint: "jaeger:14268/api/traces"
+  insecure: true
+  timeout: 5s
+  headers:
+    x-trace-source: prometheus

@@ -1,0 +1,26 @@
+{
+  "name": "@imagineer/parser",
+  "version": "0.1.0",
+  "description": "Design parser engine for visual element recognition and analysis",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest",
+    "lint": "eslint src/**/*.ts"
+  },
+  "dependencies": {
+    "sharp": "^0.33.1",
+    "jimp": "^0.22.10",
+    "color": "^4.2.3",
+    "lodash": "^4.17.21"
+  },
+  "devDependencies": {
+    "@types/color": "^3.0.6",
+    "@types/lodash": "^4.14.202",
+    "@types/node": "^20.10.4",
+    "typescript": "^5.3.3",
+    "vitest": "^1.0.4",
+    "eslint": "^8.56.0"
+  }
+}

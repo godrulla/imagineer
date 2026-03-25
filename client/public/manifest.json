@@ -1,0 +1,27 @@
+{
+  "name": "Imagineer - Design to LLM Translation Platform",
+  "short_name": "Imagineer",
+  "description": "Revolutionary platform that bridges visual design tools and Large Language Models through AI-powered translation",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#3B82F6",
+  "background_color": "#ffffff",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "developer", "design"],
+  "screenshots": [
+    {
+      "src": "/assets/images/screenshot-1.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "label": "Imagineer Editor Interface"
+    }
+  ]
+}

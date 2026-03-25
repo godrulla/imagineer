@@ -1,0 +1,1015 @@
+# ============================================================================
+# IMAGINEER INTER-SERVICE COMMUNICATION PATTERNS
+# ============================================================================
+# This document defines the communication patterns between Imagineer microservices
+# including async events, webhooks, circuit breakers, and service discovery.
+
+# ============================================================================
+# EVENT-DRIVEN ARCHITECTURE
+# ============================================================================
+
+# Event Bus Configuration (Redis Streams / Apache Kafka)
+event_bus:
+  provider: redis_streams  # redis_streams | kafka | rabbitmq
+  configuration:
+    redis:
+      host: redis-cluster
+      port: 6379
+      cluster_mode: true
+      max_retries: 3
+      retry_delay_ms: 1000
+    
+    # Alternative Kafka configuration
+    kafka:
+      brokers: ["kafka-1:9092", "kafka-2:9092", "kafka-3:9092"]
+      security_protocol: SASL_SSL
+      sasl_mechanism: PLAIN
+      replication_factor: 3
+      partitions: 12
+
+# Event Schema Registry
+event_schemas:
+  format: json_schema
+  registry_url: http://schema-registry:8081
+  compatibility: BACKWARD
+  
+# ============================================================================
+# ASYNC EVENT DEFINITIONS
+# ============================================================================
+
+events:
+  # Design Parser Service Events
+  design_parser:
+    project_created:
+      schema:
+        type: object
+        required: [event_id, timestamp, organization_id, project_id, created_by]
+        properties:
+          event_id:
+            type: string
+            format: uuid
+          event_type:
+            type: string
+            const: "design_parser.project_created"
+          timestamp:
+            type: string
+            format: date-time
+          organization_id:
+            type: string
+            format: uuid
+          project_id:
+            type: string
+            format: uuid
+          project_name:
+            type: string
+          source_tool:
+            type: string
+            enum: [figma, sketch, adobe_xd, photoshop, illustrator]
+          created_by:
+            type: string
+            format: uuid
+          metadata:
+            type: object
+      subscribers:
+        - collaboration-hub
+        - export-engine
+      delivery_guarantee: at_least_once
+      retention_hours: 168  # 7 days
+
+    file_uploaded:
+      schema:
+        type: object
+        required: [event_id, timestamp, organization_id, project_id, file_id, uploaded_by]
+        properties:
+          event_id:
+            type: string
+            format: uuid
+          event_type:
+            type: string
+            const: "design_parser.file_uploaded"
+          timestamp:
+            type: string
+            format: date-time
+          organization_id:
+            type: string
+            format: uuid
+          project_id:
+            type: string
+            format: uuid
+          file_id:
+            type: string
+            format: uuid
+          filename:
+            type: string
+          file_type:
+            type: string
+          file_size_bytes:
+            type: integer
+          uploaded_by:
+            type: string
+            format: uuid
+          auto_process:
+            type: boolean
+          metadata:
+            type: object
+      subscribers:
+        - translation-engine
+        - collaboration-hub
+      delivery_guarantee: at_least_once
+
+    file_processed:
+      schema:
+        type: object
+        required: [event_id, timestamp, organization_id, project_id, file_id, processing_status]
+        properties:
+          event_id:
+            type: string
+            format: uuid
+          event_type:
+            type: string
+            const: "design_parser.file_processed"
+          timestamp:
+            type: string
+            format: date-time
+          organization_id:
+            type: string
+            format: uuid
+          project_id:
+            type: string
+            format: uuid
+          file_id:
+            type: string
+            format: uuid
+          parsed_design_id:
+            type: string
+            format: uuid
+            nullable: true
+          processing_status:
+            type: string
+            enum: [completed, failed]
+          processing_duration_seconds:
+            type: number
+          elements_extracted:
+            type: integer
+            nullable: true
+          error_message:
+            type: string
+            nullable: true
+          metadata:
+            type: object
+      subscribers:
+        - translation-engine
+        - collaboration-hub
+        - export-engine
+      delivery_guarantee: at_least_once
+
+    figma_sync_completed:
+      schema:
+        type: object
+        required: [event_id, timestamp, organization_id, project_id, sync_status]
+        properties:
+          event_id:
+            type: string
+            format: uuid
+          event_type:
+            type: string
+            const: "design_parser.figma_sync_completed"
+          timestamp:
+            type: string
+            format: date-time
+          organization_id:
+            type: string
+            format: uuid
+          project_id:
+            type: string
+            format: uuid
+          figma_file_key:
+            type: string
+          sync_status:
+            type: string
+            enum: [success, failed, partial]
+          changes_detected:
+            type: integer
+          files_updated:
+            type: integer
+          sync_duration_seconds:
+            type: number
+          error_message:
+            type: string
+            nullable: true
+          metadata:
+            type: object
+      subscribers:
+        - collaboration-hub
+        - translation-engine
+      delivery_guarantee: at_least_once
+
+  # Translation Engine Service Events
+  translation_engine:
+    translation_job_started:
+      schema:
+        type: object
+        required: [event_id, timestamp, organization_id, job_id, llm_provider]
+        properties:
+          event_id:
+            type: string
+            format: uuid
+          event_type:
+            type: string
+            const: "translation_engine.job_started"
+          timestamp:
+            type: string
+            format: date-time
+          organization_id:
+            type: string
+            format: uuid
+          project_id:
+            type: string
+            format: uuid
+          job_id:
+            type: string
+            format: uuid
+          template_id:
+            type: string
+            format: uuid
+            nullable: true
+          llm_provider:
+            type: string
+          model_version:
+            type: string
+          estimated_duration_seconds:
+            type: integer
+          priority:
+            type: integer
+          created_by:
+            type: string
+            format: uuid
+          metadata:
+            type: object
+      subscribers:
+        - collaboration-hub
+      delivery_guarantee: at_least_once
+
+    translation_completed:
+      schema:
+        type: object
+        required: [event_id, timestamp, organization_id, job_id, status]
+        properties:
+          event_id:
+            type: string
+            format: uuid
+          event_type:
+            type: string
+            const: "translation_engine.translation_completed"
+          timestamp:
+            type: string
+            format: date-time
+          organization_id:
+            type: string
+            format: uuid
+          project_id:
+            type: string
+            format: uuid
+          job_id:
+            type: string
+            format: uuid
+          result_id:
+            type: string
+            format: uuid
+            nullable: true
+          status:
+            type: string
+            enum: [completed, failed, timeout]
+          duration_seconds:
+            type: number
+          tokens_used:
+            type: integer
+            nullable: true
+          cost_usd:
+            type: number
+            nullable: true
+          quality_score:
+            type: number
+            nullable: true
+          error_message:
+            type: string
+            nullable: true
+          metadata:
+            type: object
+      subscribers:
+        - export-engine
+        - collaboration-hub
+        - design-parser  # for analytics
+      delivery_guarantee: at_least_once
+
+    template_created:
+      schema:
+        type: object
+        required: [event_id, timestamp, organization_id, template_id, created_by]
+        properties:
+          event_id:
+            type: string
+            format: uuid
+          event_type:
+            type: string
+            const: "translation_engine.template_created"
+          timestamp:
+            type: string
+            format: date-time
+          organization_id:
+            type: string
+            format: uuid
+          template_id:
+            type: string
+            format: uuid
+          template_name:
+            type: string
+          target_format:
+            type: string
+          llm_provider:
+            type: string
+          is_public:
+            type: boolean
+          created_by:
+            type: string
+            format: uuid
+          metadata:
+            type: object
+      subscribers:
+        - collaboration-hub
+      delivery_guarantee: at_least_once
+
+  # Export Engine Service Events
+  export_engine:
+    export_job_started:
+      schema:
+        type: object
+        required: [event_id, timestamp, organization_id, job_id, export_format]
+        properties:
+          event_id:
+            type: string
+            format: uuid
+          event_type:
+            type: string
+            const: "export_engine.job_started"
+          timestamp:
+            type: string
+            format: date-time
+          organization_id:
+            type: string
+            format: uuid
+          project_id:
+            type: string
+            format: uuid
+          job_id:
+            type: string
+            format: uuid
+          export_format:
+            type: string
+          template_id:
+            type: string
+            format: uuid
+            nullable: true
+          estimated_duration_seconds:
+            type: integer
+          priority:
+            type: integer
+          created_by:
+            type: string
+            format: uuid
+          metadata:
+            type: object
+      subscribers:
+        - collaboration-hub
+      delivery_guarantee: at_least_once
+
+    export_completed:
+      schema:
+        type: object
+        required: [event_id, timestamp, organization_id, job_id, status]
+        properties:
+          event_id:
+            type: string
+            format: uuid
+          event_type:
+            type: string
+            const: "export_engine.export_completed"
+          timestamp:
+            type: string
+            format: date-time
+          organization_id:
+            type: string
+            format: uuid
+          project_id:
+            type: string
+            format: uuid
+          job_id:
+            type: string
+            format: uuid
+          artifact_id:
+            type: string
+            format: uuid
+            nullable: true
+          status:
+            type: string
+            enum: [completed, failed, timeout]
+          duration_seconds:
+            type: number
+          output_size_bytes:
+            type: integer
+            nullable: true
+          download_url:
+            type: string
+            format: uri
+            nullable: true
+          expires_at:
+            type: string
+            format: date-time
+            nullable: true
+          error_message:
+            type: string
+            nullable: true
+          metadata:
+            type: object
+      subscribers:
+        - collaboration-hub
+        - design-parser  # for analytics
+      delivery_guarantee: at_least_once
+
+    artifact_downloaded:
+      schema:
+        type: object
+        required: [event_id, timestamp, organization_id, artifact_id]
+        properties:
+          event_id:
+            type: string
+            format: uuid
+          event_type:
+            type: string
+            const: "export_engine.artifact_downloaded"
+          timestamp:
+            type: string
+            format: date-time
+          organization_id:
+            type: string
+            format: uuid
+          artifact_id:
+            type: string
+            format: uuid
+          downloaded_by:
+            type: string
+            format: uuid
+            nullable: true
+          download_method:
+            type: string
+            enum: [direct, share_link, api]
+          ip_address:
+            type: string
+          user_agent:
+            type: string
+          file_size_bytes:
+            type: integer
+          metadata:
+            type: object
+      subscribers:
+        - collaboration-hub  # for activity feed
+      delivery_guarantee: best_effort
+
+  # Collaboration Hub Service Events
+  collaboration_hub:
+    workspace_created:
+      schema:
+        type: object
+        required: [event_id, timestamp, organization_id, workspace_id, created_by]
+        properties:
+          event_id:
+            type: string
+            format: uuid
+          event_type:
+            type: string
+            const: "collaboration_hub.workspace_created"
+          timestamp:
+            type: string
+            format: date-time
+          organization_id:
+            type: string
+            format: uuid
+          workspace_id:
+            type: string
+            format: uuid
+          workspace_name:
+            type: string
+          project_id:
+            type: string
+            format: uuid
+            nullable: true
+          team_id:
+            type: string
+            format: uuid
+            nullable: true
+          is_public:
+            type: boolean
+          created_by:
+            type: string
+            format: uuid
+          metadata:
+            type: object
+      subscribers:
+        - design-parser  # for project association
+      delivery_guarantee: at_least_once
+
+    user_joined_workspace:
+      schema:
+        type: object
+        required: [event_id, timestamp, organization_id, workspace_id, user_id]
+        properties:
+          event_id:
+            type: string
+            format: uuid
+          event_type:
+            type: string
+            const: "collaboration_hub.user_joined_workspace"
+          timestamp:
+            type: string
+            format: date-time
+          organization_id:
+            type: string
+            format: uuid
+          workspace_id:
+            type: string
+            format: uuid
+          user_id:
+            type: string
+            format: uuid
+          user_name:
+            type: string
+          role:
+            type: string
+          session_id:
+            type: string
+            format: uuid
+          metadata:
+            type: object
+      subscribers:
+        - design-parser  # for access logging
+      delivery_guarantee: best_effort
+
+    comment_created:
+      schema:
+        type: object
+        required: [event_id, timestamp, organization_id, comment_id, author_id]
+        properties:
+          event_id:
+            type: string
+            format: uuid
+          event_type:
+            type: string
+            const: "collaboration_hub.comment_created"
+          timestamp:
+            type: string
+            format: date-time
+          organization_id:
+            type: string
+            format: uuid
+          project_id:
+            type: string
+            format: uuid
+            nullable: true
+          workspace_id:
+            type: string
+            format: uuid
+            nullable: true
+          comment_id:
+            type: string
+            format: uuid
+          parent_comment_id:
+            type: string
+            format: uuid
+            nullable: true
+          author_id:
+            type: string
+            format: uuid
+          content_preview:
+            type: string
+            maxLength: 200
+          mentions:
+            type: array
+            items:
+              type: string
+              format: uuid
+          design_file_id:
+            type: string
+            format: uuid
+            nullable: true
+          element_id:
+            type: string
+            format: uuid
+            nullable: true
+          metadata:
+            type: object
+      subscribers:
+        - design-parser  # for analytics
+        - translation-engine  # for mention notifications
+        - export-engine  # for comment export features
+      delivery_guarantee: at_least_once
+
+# ============================================================================
+# WEBHOOK PATTERNS
+# ============================================================================
+
+webhooks:
+  # External webhook configurations for customer integrations
+  external_webhooks:
+    # Design update notifications for external tools
+    design_updates:
+      events:
+        - design_parser.file_processed
+        - design_parser.figma_sync_completed
+      payload_template:
+        webhook_id: "{{webhook.id}}"
+        event_type: "{{event.type}}"
+        timestamp: "{{event.timestamp}}"
+        organization_id: "{{event.organization_id}}"
+        project:
+          id: "{{event.project_id}}"
+          name: "{{project.name}}"
+        data: "{{event.data}}"
+        signature: "{{hmac_sha256(payload, webhook.secret)}}"
+      
+      retry_policy:
+        max_attempts: 5
+        backoff_strategy: exponential
+        initial_delay_seconds: 1
+        max_delay_seconds: 300
+        timeout_seconds: 30
+      
+      security:
+        signature_header: X-Imagineer-Signature
+        timestamp_header: X-Imagineer-Timestamp
+        timestamp_tolerance_seconds: 300
+
+    # Translation completion notifications
+    translation_events:
+      events:
+        - translation_engine.translation_completed
+      payload_template:
+        webhook_id: "{{webhook.id}}"
+        event_type: "{{event.type}}"
+        timestamp: "{{event.timestamp}}"
+        organization_id: "{{event.organization_id}}"
+        translation:
+          job_id: "{{event.job_id}}"
+          status: "{{event.status}}"
+          result_id: "{{event.result_id}}"
+          duration_seconds: "{{event.duration_seconds}}"
+          quality_score: "{{event.quality_score}}"
+        signature: "{{hmac_sha256(payload, webhook.secret)}}"
+
+    # Export completion notifications
+    export_events:
+      events:
+        - export_engine.export_completed
+      payload_template:
+        webhook_id: "{{webhook.id}}"
+        event_type: "{{event.type}}"
+        timestamp: "{{event.timestamp}}"
+        organization_id: "{{event.organization_id}}"
+        export:
+          job_id: "{{event.job_id}}"
+          status: "{{event.status}}"
+          artifact_id: "{{event.artifact_id}}"
+          download_url: "{{event.download_url}}"
+          expires_at: "{{event.expires_at}}"
+        signature: "{{hmac_sha256(payload, webhook.secret)}}"
+
+  # Internal service-to-service webhooks
+  internal_webhooks:
+    # Collaboration Hub notifications to external systems
+    collaboration_notifications:
+      target_services: [slack, discord, microsoft_teams]
+      events:
+        - collaboration_hub.comment_created
+        - collaboration_hub.workspace_created
+      
+      formatters:
+        slack:
+          template: |
+            {
+              "text": "New activity in Imagineer",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*{{event.type}}* in workspace <{{workspace_url}}|{{workspace.name}}>"
+                  }
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "by {{user.name}} at {{event.timestamp}}"
+                    }
+                  ]
+                }
+              ]
+            }
+
+# ============================================================================
+# CIRCUIT BREAKER PATTERNS
+# ============================================================================
+
+circuit_breakers:
+  # Circuit breaker configurations for service resilience
+  configurations:
+    default:
+      failure_threshold: 5
+      timeout_seconds: 60
+      reset_timeout_seconds: 30
+      monitor_window_seconds: 60
+      
+    llm_providers:
+      failure_threshold: 3
+      timeout_seconds: 30
+      reset_timeout_seconds: 60
+      monitor_window_seconds: 300
+      
+    external_apis:
+      failure_threshold: 5
+      timeout_seconds: 10
+      reset_timeout_seconds: 120
+      monitor_window_seconds: 180
+
+  # Service-specific circuit breaker rules
+  service_rules:
+    translation_engine:
+      outbound:
+        openai_api:
+          circuit_breaker: llm_providers
+          fallback_strategy: queue_for_retry
+          
+        anthropic_api:
+          circuit_breaker: llm_providers
+          fallback_strategy: use_alternative_provider
+          
+        google_api:
+          circuit_breaker: llm_providers
+          fallback_strategy: use_alternative_provider
+
+    design_parser:
+      outbound:
+        figma_api:
+          circuit_breaker: external_apis
+          fallback_strategy: use_cached_data
+          
+        s3_storage:
+          circuit_breaker: default
+          fallback_strategy: use_local_storage
+
+    export_engine:
+      outbound:
+        storage_providers:
+          circuit_breaker: default
+          fallback_strategy: use_alternative_storage
+          
+        cdn_providers:
+          circuit_breaker: default
+          fallback_strategy: direct_storage_url
+
+    collaboration_hub:
+      outbound:
+        notification_services:
+          circuit_breaker: external_apis
+          fallback_strategy: queue_for_later
+          
+        websocket_gateway:
+          circuit_breaker: default
+          fallback_strategy: polling_fallback
+
+# ============================================================================
+# SERVICE DISCOVERY & LOAD BALANCING
+# ============================================================================
+
+service_discovery:
+  provider: consul  # consul | eureka | kubernetes
+  
+  consul_config:
+    host: consul-cluster
+    port: 8500
+    datacenter: dc1
+    
+    health_checks:
+      http:
+        interval: 10s
+        timeout: 3s
+        deregister_critical_service_after: 60s
+      
+      tcp:
+        interval: 10s
+        timeout: 3s
+
+  service_registrations:
+    design_parser:
+      service_name: imagineer-design-parser
+      port: 8001
+      health_check_path: /health
+      tags: [api, microservice, design]
+      
+    translation_engine:
+      service_name: imagineer-translation-engine
+      port: 8002
+      health_check_path: /health
+      tags: [api, microservice, translation, llm]
+      
+    export_engine:
+      service_name: imagineer-export-engine
+      port: 8003
+      health_check_path: /health
+      tags: [api, microservice, export]
+      
+    collaboration_hub:
+      service_name: imagineer-collaboration-hub
+      port: 8004
+      health_check_path: /health
+      tags: [api, microservice, collaboration, websocket]
+
+  load_balancing:
+    algorithm: round_robin  # round_robin | least_connections | weighted_round_robin
+    health_check_interval: 30s
+    unhealthy_threshold: 3
+    healthy_threshold: 2
+
+# ============================================================================
+# API VERSIONING STRATEGY
+# ============================================================================
+
+api_versioning:
+  strategy: uri_path  # uri_path | header | query_parameter
+  
+  current_version: v1
+  supported_versions: [v1]
+  deprecated_versions: []
+  
+  version_lifecycle:
+    development_period_months: 6
+    deprecation_notice_months: 6
+    support_period_months: 12
+  
+  backwards_compatibility:
+    required_for_minor_versions: true
+    breaking_changes_only_major: true
+    
+  migration_support:
+    automatic_migration: false
+    migration_guides_required: true
+    migration_tools_provided: true
+
+# ============================================================================
+# RETRY POLICIES
+# ============================================================================
+
+retry_policies:
+  default:
+    max_attempts: 3
+    initial_delay_ms: 100
+    max_delay_ms: 5000
+    backoff_multiplier: 2.0
+    jitter: true
+    
+  idempotent_operations:
+    max_attempts: 5
+    initial_delay_ms: 50
+    max_delay_ms: 2000
+    backoff_multiplier: 1.5
+    jitter: true
+    
+  non_idempotent_operations:
+    max_attempts: 1
+    initial_delay_ms: 0
+    max_delay_ms: 0
+    backoff_multiplier: 1.0
+    jitter: false
+    
+  external_api_calls:
+    max_attempts: 3
+    initial_delay_ms: 500
+    max_delay_ms: 10000
+    backoff_multiplier: 2.0
+    jitter: true
+    timeout_per_attempt_ms: 30000
+
+# ============================================================================
+# RATE LIMITING
+# ============================================================================
+
+rate_limiting:
+  # Global rate limits
+  global:
+    requests_per_minute: 10000
+    burst_size: 100
+    
+  # Per-service rate limits
+  per_service:
+    design_parser:
+      requests_per_minute: 1000
+      file_upload_per_hour: 100
+      
+    translation_engine:
+      requests_per_minute: 500
+      llm_calls_per_hour: 1000
+      
+    export_engine:
+      requests_per_minute: 800
+      export_jobs_per_hour: 200
+      
+    collaboration_hub:
+      requests_per_minute: 2000
+      websocket_connections_per_user: 5
+
+  # Per-organization rate limits
+  organization_limits:
+    free_tier:
+      requests_per_day: 1000
+      translations_per_month: 100
+      exports_per_month: 50
+      storage_gb: 1
+      
+    starter_tier:
+      requests_per_day: 10000
+      translations_per_month: 1000
+      exports_per_month: 500
+      storage_gb: 10
+      
+    professional_tier:
+      requests_per_day: 100000
+      translations_per_month: 10000
+      exports_per_month: 5000
+      storage_gb: 100
+      
+    enterprise_tier:
+      requests_per_day: 1000000
+      translations_per_month: 100000
+      exports_per_month: 50000
+      storage_gb: 1000
+
+# ============================================================================
+# MONITORING & OBSERVABILITY
+# ============================================================================
+
+monitoring:
+  metrics:
+    provider: prometheus
+    collection_interval: 15s
+    retention_days: 30
+    
+    custom_metrics:
+      - translation_accuracy_score
+      - export_generation_time
+      - collaboration_session_duration
+      - file_processing_queue_depth
+      
+  tracing:
+    provider: jaeger
+    sampling_rate: 0.1
+    max_traces_per_second: 1000
+    
+  logging:
+    provider: elasticsearch
+    log_level: info
+    structured_logging: true
+    retention_days: 90
+    
+    correlation_id:
+      header_name: X-Request-ID
+      propagate_to_events: true
+      include_in_responses: true
+
+# ============================================================================
+# SECURITY PATTERNS
+# ============================================================================
+
+security:
+  inter_service_auth:
+    method: mutual_tls
+    cert_rotation_days: 90
+    
+  api_authentication:
+    methods: [jwt, api_key]
+    jwt_expiry_hours: 24
+    api_key_rotation_days: 365
+    
+  encryption:
+    in_transit: tls_1_3
+    at_rest: aes_256_gcm
+    key_management: vault
+    
+  rate_limiting:
+    ddos_protection: cloudflare
+    geo_blocking: enabled
+    
+  audit_logging:
+    enabled: true
+    include_request_body: false
+    include_response_body: false
+    retention_years: 7

@@ -1,0 +1,934 @@
+# ============================================================================
+# ENHANCED KONG API GATEWAY CONFIGURATION FOR IMAGINEER PLATFORM
+# Advanced routing, authentication, versioning, and middleware pipeline
+# ============================================================================
+
+_format_version: "3.0"
+_transform: true
+
+# ============================================================================
+# SERVICES CONFIGURATION
+# ============================================================================
+
+services:
+  # ========================================================================
+  # DESIGN PARSER SERVICE
+  # ========================================================================
+  - name: design-parser-v1
+    url: http://design-parser:8001
+    protocol: http
+    connect_timeout: 10000
+    write_timeout: 60000
+    read_timeout: 60000
+    retries: 3
+    tags: [api, v1, design-parser]
+    
+    plugins:
+      # Rate Limiting with Redis
+      - name: rate-limiting-advanced
+        config:
+          limit:
+            - 1000  # per minute
+          window_size: [60]
+          identifier: consumer
+          sync_rate: 10
+          strategy: redis
+          redis:
+            host: redis-cluster
+            port: 6379
+            database: 0
+            password: ${REDIS_PASSWORD}
+            sentinel_master: mymaster
+            sentinel_role: master
+            sentinel_addresses: ["redis-sentinel-1:26379", "redis-sentinel-2:26379"]
+          hide_client_headers: false
+          header_name: X-RateLimit-Limit-Minute
+          
+      # Circuit Breaker
+      - name: proxy-circuit-breaker
+        config:
+          failure_threshold: 5
+          recovery_timeout: 30
+          window_size: 60
+          
+      # Request/Response Transformation
+      - name: request-transformer-advanced
+        config:
+          add:
+            headers:
+              - "X-Service-Name:design-parser"
+              - "X-Request-ID:$(uuid())"
+              - "X-Forwarded-Host:$(host)"
+              - "X-Gateway-Version:1.0.0"
+            querystring:
+              - "source:api-gateway"
+          remove:
+            headers:
+              - "X-Internal-Token"
+          replace:
+            headers:
+              - "User-Agent:Imagineer-Gateway/1.0"
+              
+      # Response Transformation
+      - name: response-transformer-advanced
+        config:
+          add:
+            headers:
+              - "X-Response-Time:$(latency)"
+              - "X-Service-Version:v1"
+              - "X-Rate-Limit-Remaining:$(rate_limit_remaining)"
+            json:
+              - "response_metadata.gateway_version:1.0.0"
+              - "response_metadata.timestamp:$(now)"
+              
+      # Request Size Limiting
+      - name: request-size-limiting
+        config:
+          allowed_payload_size: 50  # 50MB for file uploads
+          size_unit: megabytes
+          require_content_length: true
+          
+      # Request/Response Logging
+      - name: http-log
+        config:
+          http_endpoint: http://log-aggregator:8080/gateway-logs
+          method: POST
+          content_type: application/json
+          timeout: 10000
+          keepalive: 60000
+          retry_count: 3
+          queue_size: 1000
+          flush_timeout: 2
+          custom_fields_by_lua:
+            service_name: "return 'design-parser'"
+            request_duration: "return kong.ctx.shared.request_duration"
+            
+      # Prometheus Metrics
+      - name: prometheus
+        config:
+          per_consumer: true
+          status_code_metrics: true
+          latency_metrics: true
+          bandwidth_metrics: true
+          upstream_health_metrics: true
+          
+      # Request/Response Validation
+      - name: request-validator
+        config:
+          version: draft4
+          body_schema: |
+            {
+              "type": "object",
+              "properties": {
+                "organization_id": {"type": "string", "format": "uuid"}
+              },
+              "required": ["organization_id"]
+            }
+            
+      # IP Restriction (optional - for admin endpoints)
+      - name: ip-restriction
+        config:
+          deny: ["192.168.1.0/24"]  # Block internal network access
+          
+    routes:
+      # Public API routes
+      - name: design-parser-public-v1
+        paths: ["/api/v1/parser"]
+        methods: [GET, POST, PUT, DELETE, PATCH, OPTIONS]
+        strip_path: false
+        preserve_host: true
+        regex_priority: 100
+        tags: [public, v1]
+        
+        plugins:
+          # CORS for web clients
+          - name: cors
+            config:
+              origins: 
+                - "https://app.imagineer.dev"
+                - "https://staging.imagineer.dev"
+                - "http://localhost:3000"
+                - "http://localhost:5173"
+              methods: [GET, POST, PUT, DELETE, PATCH, OPTIONS]
+              headers:
+                - Accept
+                - Accept-Version
+                - Authorization
+                - Content-Length
+                - Content-Type
+                - Date
+                - X-Auth-Token
+                - X-API-Key
+                - X-Request-ID
+              exposed_headers:
+                - X-Auth-Token
+                - X-Request-ID
+                - X-Response-Time
+                - X-Rate-Limit-Remaining
+              credentials: true
+              max_age: 86400
+              preflight_continue: false
+              
+          # JWT Authentication
+          - name: jwt
+            config:
+              key_claim_name: iss
+              claims_to_verify: [exp, iss]
+              uri_param_names: [jwt]
+              cookie_names: [imagineer_jwt]
+              header_names: [Authorization]
+              anonymous: 00000000-0000-0000-0000-000000000001
+              run_on_preflight: false
+              
+      # File upload routes with different limits
+      - name: design-parser-upload-v1
+        paths: ["/api/v1/parser/files", "/api/v1/parser/projects/*/files"]
+        methods: [POST]
+        strip_path: false
+        tags: [upload, v1]
+        
+        plugins:
+          - name: request-size-limiting
+            config:
+              allowed_payload_size: 100  # 100MB for design files
+              
+          - name: rate-limiting-advanced
+            config:
+              limit: [10]  # 10 uploads per minute
+              window_size: [60]
+              
+      # Admin routes with stricter security
+      - name: design-parser-admin-v1
+        paths: ["/api/v1/parser/admin"]
+        methods: [GET, POST, PUT, DELETE]
+        strip_path: false
+        tags: [admin, v1]
+        
+        plugins:
+          - name: key-auth
+            config:
+              key_names: [X-Admin-Key]
+              hide_credentials: true
+              
+          - name: ip-restriction
+            config:
+              allow: 
+                - "10.0.0.0/8"      # Internal networks only
+                - "172.16.0.0/12"
+                - "192.168.0.0/16"
+
+  # ========================================================================
+  # TRANSLATION ENGINE SERVICE
+  # ========================================================================
+  - name: translation-engine-v1
+    url: http://translation-engine:8002
+    protocol: http
+    connect_timeout: 10000
+    write_timeout: 300000  # 5 minutes for LLM calls
+    read_timeout: 300000
+    retries: 2
+    tags: [api, v1, translation-engine]
+    
+    plugins:
+      # Rate Limiting (lower for LLM costs)
+      - name: rate-limiting-advanced
+        config:
+          limit: [100]  # per minute
+          window_size: [60]
+          identifier: consumer
+          strategy: redis
+          redis:
+            host: redis-cluster
+            port: 6379
+            database: 1
+            
+      # Circuit Breaker with custom config for LLM services
+      - name: proxy-circuit-breaker
+        config:
+          failure_threshold: 3
+          recovery_timeout: 60
+          window_size: 300
+          
+      # Request Transformation
+      - name: request-transformer-advanced
+        config:
+          add:
+            headers:
+              - "X-Service-Name:translation-engine"
+              - "X-Request-ID:$(uuid())"
+              - "X-LLM-Request-Time:$(now)"
+              
+      # Response caching for templates and common requests
+      - name: proxy-cache-advanced
+        config:
+          response_code: [200, 301, 404]
+          request_method: [GET, HEAD]
+          content_type: 
+            - "application/json"
+            - "text/plain"
+          cache_ttl: 300  # 5 minutes
+          strategy: redis
+          redis:
+            host: redis-cluster
+            port: 6379
+            database: 2
+            
+      # Request/Response Logging with LLM-specific fields
+      - name: http-log
+        config:
+          http_endpoint: http://log-aggregator:8080/translation-logs
+          custom_fields_by_lua:
+            llm_provider: "return kong.request.get_header('X-LLM-Provider')"
+            model_version: "return kong.request.get_header('X-Model-Version')"
+            tokens_used: "return kong.response.get_header('X-Tokens-Used')"
+            
+    routes:
+      - name: translation-engine-public-v1
+        paths: ["/api/v1/translate"]
+        methods: [GET, POST, PUT, DELETE, OPTIONS]
+        strip_path: false
+        tags: [public, v1]
+        
+        plugins:
+          - name: cors
+            config:
+              origins: 
+                - "https://app.imagineer.dev"
+                - "https://staging.imagineer.dev"
+                - "http://localhost:3000"
+                - "http://localhost:5173"
+              credentials: true
+              
+          # JWT with longer timeout for translation jobs
+          - name: jwt
+            config:
+              claims_to_verify: [exp, iss]
+              maximum_expiration: 3600  # 1 hour
+              
+      # Direct translation endpoint with stricter limits
+      - name: translation-direct-v1
+        paths: ["/api/v1/translate/generate", "/api/v1/translate/batch"]
+        methods: [POST]
+        strip_path: false
+        tags: [direct, v1]
+        
+        plugins:
+          - name: rate-limiting-advanced
+            config:
+              limit: [20]  # 20 direct translations per minute
+              window_size: [60]
+              
+          - name: request-size-limiting
+            config:
+              allowed_payload_size: 10  # 10MB max for direct translation
+
+  # ========================================================================
+  # EXPORT ENGINE SERVICE
+  # ========================================================================
+  - name: export-engine-v1
+    url: http://export-engine:8003
+    protocol: http
+    connect_timeout: 10000
+    write_timeout: 180000  # 3 minutes for large exports
+    read_timeout: 180000
+    retries: 3
+    tags: [api, v1, export-engine]
+    
+    plugins:
+      - name: rate-limiting-advanced
+        config:
+          limit: [200]  # per minute
+          window_size: [60]
+          
+      - name: request-transformer-advanced
+        config:
+          add:
+            headers:
+              - "X-Service-Name:export-engine"
+              - "X-Request-ID:$(uuid())"
+              
+      # File serving optimization
+      - name: response-transformer-advanced
+        config:
+          add:
+            headers:
+              - "Cache-Control:public, max-age=3600"  # 1 hour cache for exports
+              - "X-Content-Type-Options:nosniff"
+              
+    routes:
+      - name: export-engine-public-v1
+        paths: ["/api/v1/export"]
+        methods: [GET, POST, PUT, DELETE, OPTIONS]
+        strip_path: false
+        tags: [public, v1]
+        
+      # Download routes with different caching
+      - name: export-download-v1
+        paths: ["/api/v1/export/artifacts/*/download"]
+        methods: [GET]
+        strip_path: false
+        tags: [download, v1]
+        
+        plugins:
+          - name: proxy-cache-advanced
+            config:
+              cache_ttl: 86400  # 24 hours for downloads
+              
+          # File access logging
+          - name: file-log
+            config:
+              path: /var/log/kong/export-downloads.log
+              custom_fields_by_lua:
+                file_size: "return kong.response.get_header('Content-Length')"
+                download_type: "return kong.request.get_query_arg('format')"
+
+  # ========================================================================
+  # COLLABORATION HUB SERVICE
+  # ========================================================================
+  - name: collaboration-hub-v1
+    url: http://collaboration-hub:8004
+    protocol: http
+    connect_timeout: 10000
+    write_timeout: 30000
+    read_timeout: 30000
+    retries: 3
+    tags: [api, v1, collaboration-hub]
+    
+    plugins:
+      # Higher rate limits for real-time features
+      - name: rate-limiting-advanced
+        config:
+          limit: [500]  # per minute
+          window_size: [60]
+          
+      - name: request-transformer-advanced
+        config:
+          add:
+            headers:
+              - "X-Service-Name:collaboration-hub"
+              - "X-Request-ID:$(uuid())"
+              
+    routes:
+      - name: collaboration-hub-public-v1
+        paths: ["/api/v1/collaboration"]
+        methods: [GET, POST, PUT, DELETE, OPTIONS]
+        strip_path: false
+        tags: [public, v1]
+        
+      # WebSocket routes with special handling
+      - name: collaboration-websocket-v1
+        paths: ["/socket.io"]
+        protocols: [http, https, ws, wss]
+        strip_path: false
+        tags: [websocket, v1]
+        
+        plugins:
+          # WebSocket-specific rate limiting
+          - name: rate-limiting-advanced
+            config:
+              limit: [1000]  # Higher limit for WebSocket messages
+              window_size: [60]
+              
+          # WebSocket connection logging
+          - name: http-log
+            config:
+              http_endpoint: http://log-aggregator:8080/websocket-logs
+              custom_fields_by_lua:
+                connection_type: "return 'websocket'"
+                upgrade_header: "return kong.request.get_header('Upgrade')"
+
+# ============================================================================
+# CONSUMERS & AUTHENTICATION
+# ============================================================================
+
+consumers:
+  # API Key consumers for different tiers
+  - username: imagineer-web-client
+    custom_id: web-client-v1
+    tags: [web-client, tier-professional]
+    
+    keyauth_credentials:
+      - key: ${WEB_CLIENT_API_KEY}
+        tags: [web-client]
+        
+    jwt_secrets:
+      - key: imagineer-web-issuer
+        algorithm: HS256
+        secret: ${JWT_SECRET_WEB}
+        
+    plugins:
+      - name: rate-limiting-advanced
+        config:
+          limit: [10000]  # per hour
+          window_size: [3600]
+          
+      - name: request-size-limiting
+        config:
+          allowed_payload_size: 100  # 100MB
+
+  - username: imagineer-mobile-client
+    custom_id: mobile-client-v1
+    tags: [mobile-client, tier-professional]
+    
+    keyauth_credentials:
+      - key: ${MOBILE_CLIENT_API_KEY}
+        
+    jwt_secrets:
+      - key: imagineer-mobile-issuer
+        algorithm: HS256
+        secret: ${JWT_SECRET_MOBILE}
+        
+    plugins:
+      - name: rate-limiting-advanced
+        config:
+          limit: [5000]  # per hour
+          window_size: [3600]
+
+  # Enterprise customers
+  - username: enterprise-customer-1
+    custom_id: enterprise-acme-corp
+    tags: [enterprise, tier-enterprise]
+    
+    keyauth_credentials:
+      - key: ${ENTERPRISE_API_KEY_1}
+        
+    plugins:
+      - name: rate-limiting-advanced
+        config:
+          limit: [100000]  # per hour
+          window_size: [3600]
+          
+  # Anonymous consumer for public endpoints
+  - username: anonymous-user
+    custom_id: 00000000-0000-0000-0000-000000000001
+    tags: [anonymous]
+    
+    plugins:
+      - name: rate-limiting-advanced
+        config:
+          limit: [100]  # per hour for anonymous
+          window_size: [3600]
+
+# ============================================================================
+# GLOBAL PLUGINS
+# ============================================================================
+
+plugins:
+  # ========================================================================
+  # SECURITY PLUGINS
+  # ========================================================================
+  
+  # CORS Configuration
+  - name: cors
+    config:
+      origins:
+        - "https://app.imagineer.dev"
+        - "https://staging.imagineer.dev"
+        - "https://docs.imagineer.dev"
+        - "http://localhost:3000"
+        - "http://localhost:5173"
+        - "http://localhost:8080"
+      methods: [GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD]
+      headers:
+        - Accept
+        - Accept-Version
+        - Authorization
+        - Content-Length
+        - Content-MD5
+        - Content-Type
+        - Date
+        - X-Auth-Token
+        - X-API-Key
+        - X-Request-ID
+        - X-Requested-With
+        - X-Custom-Header
+      exposed_headers:
+        - X-Auth-Token
+        - X-Request-ID
+        - X-Response-Time
+        - X-Rate-Limit-Remaining
+        - X-Rate-Limit-Limit
+        - X-Rate-Limit-Reset
+      credentials: true
+      max_age: 86400
+      preflight_continue: false
+
+  # Security Headers
+  - name: response-transformer-advanced
+    config:
+      add:
+        headers:
+          # Security headers
+          - "X-Content-Type-Options:nosniff"
+          - "X-Frame-Options:DENY"
+          - "X-XSS-Protection:1; mode=block"
+          - "Strict-Transport-Security:max-age=31536000; includeSubDomains; preload"
+          - "Referrer-Policy:strict-origin-when-cross-origin"
+          - "Content-Security-Policy:default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' wss: https:; media-src 'self'; object-src 'none'; child-src 'none'; worker-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'"
+          - "Permissions-Policy:geolocation=(), microphone=(), camera=()"
+          
+          # API metadata headers
+          - "X-API-Version:v1"
+          - "X-Gateway-Timestamp:$(now)"
+          - "X-Powered-By:Kong Gateway"
+
+  # Request ID Generation and Propagation
+  - name: correlation-id
+    config:
+      header_name: X-Request-ID
+      generator: uuid#counter
+      echo_downstream: true
+
+  # Bot Detection and Security
+  - name: bot-detection
+    config:
+      allow: []
+      deny: 
+        - "SemrushBot"
+        - "AhrefsBot"
+        - "DotBot"
+        - "MJ12bot"
+      
+  # Request/Response Logging
+  - name: http-log
+    config:
+      http_endpoint: http://log-aggregator:8080/gateway-global-logs
+      method: POST
+      content_type: application/json
+      timeout: 10000
+      keepalive: 60000
+      retry_count: 3
+      queue_size: 5000
+      flush_timeout: 5
+      custom_fields_by_lua:
+        organization_id: "return kong.request.get_header('X-Organization-ID')"
+        user_id: "return kong.request.get_header('X-User-ID')"
+        api_version: "return kong.request.get_header('Accept-Version') or 'v1'"
+
+  # Global Rate Limiting
+  - name: rate-limiting-advanced
+    config:
+      limit: [10000]  # Global limit per minute
+      window_size: [60]
+      identifier: ip
+      strategy: redis
+      redis:
+        host: redis-cluster
+        port: 6379
+        database: 3
+      error_code: 429
+      error_message: "Global rate limit exceeded"
+
+  # Request Size Limiting (Global Default)
+  - name: request-size-limiting
+    config:
+      allowed_payload_size: 25  # 25MB default
+      size_unit: megabytes
+
+  # ========================================================================
+  # MONITORING & OBSERVABILITY PLUGINS
+  # ========================================================================
+  
+  # Prometheus Metrics
+  - name: prometheus
+    config:
+      per_consumer: true
+      status_code_metrics: true
+      latency_metrics: true
+      bandwidth_metrics: true
+      upstream_health_metrics: true
+      custom_fields:
+        service_name: true
+        route_name: true
+        
+  # OpenTracing
+  - name: opentracing
+    config:
+      http_endpoint: http://jaeger-collector:14268/api/traces
+      sample_ratio: 0.1
+      include_credential: false
+      
+  # StatsD Metrics
+  - name: statsd-advanced
+    config:
+      host: statsd-exporter
+      port: 8125
+      prefix: kong.gateway
+      metrics:
+        - name: request_count
+          stat_type: counter
+          sample_rate: 1
+        - name: request_latency
+          stat_type: timer
+        - name: request_size
+          stat_type: histogram
+        - name: response_size
+          stat_type: histogram
+
+# ============================================================================
+# HEALTH CHECK ROUTES
+# ============================================================================
+
+routes:
+  # Gateway Health Check
+  - name: gateway-health
+    paths: ["/health", "/gateway/health"]
+    methods: [GET]
+    strip_path: true
+    preserve_host: false
+    tags: [health, system]
+    
+    plugins:
+      - name: request-termination
+        config:
+          status_code: 200
+          content_type: application/json
+          body: |
+            {
+              "status": "healthy",
+              "service": "kong-gateway",
+              "version": "3.0",
+              "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)",
+              "uptime": "$(cat /proc/uptime | cut -d' ' -f1)",
+              "environment": "${KONG_ENV}",
+              "features": {
+                "rate_limiting": true,
+                "authentication": true,
+                "caching": true,
+                "monitoring": true,
+                "logging": true
+              }
+            }
+
+  # API Documentation Route
+  - name: api-docs
+    paths: ["/docs", "/api/docs", "/swagger"]
+    methods: [GET]
+    strip_path: true
+    tags: [docs, public]
+    
+    plugins:
+      - name: request-termination
+        config:
+          status_code: 200
+          content_type: application/json
+          body: |
+            {
+              "message": "Imagineer API Documentation",
+              "version": "1.0.0",
+              "documentation_url": "https://docs.imagineer.dev",
+              "api_endpoints": {
+                "design_parser": "/api/v1/parser",
+                "translation_engine": "/api/v1/translate", 
+                "export_engine": "/api/v1/export",
+                "collaboration_hub": "/api/v1/collaboration"
+              },
+              "authentication": {
+                "jwt": "Bearer token in Authorization header",
+                "api_key": "X-API-Key header"
+              },
+              "websocket": {
+                "collaboration": "wss://api.imagineer.dev/socket.io"
+              }
+            }
+
+  # Metrics endpoint for monitoring
+  - name: gateway-metrics
+    paths: ["/metrics"]
+    methods: [GET]
+    strip_path: true
+    tags: [metrics, monitoring]
+    
+    plugins:
+      - name: ip-restriction
+        config:
+          allow: 
+            - "10.0.0.0/8"      # Internal monitoring only
+            - "172.16.0.0/12"
+            - "192.168.0.0/16"
+            
+      - name: prometheus
+        config:
+          per_consumer: false
+
+# ============================================================================
+# UPSTREAM LOAD BALANCING & HEALTH CHECKS
+# ============================================================================
+
+upstreams:
+  # Design Parser Upstream with Health Checks
+  - name: design-parser-upstream
+    algorithm: consistent-hashing  # For sticky sessions
+    hash_on: ip
+    hash_on_header: X-User-ID
+    hash_fallback: ip
+    healthchecks:
+      active:
+        type: http
+        http_path: /health
+        https_verify_certificate: false
+        healthy:
+          interval: 30
+          http_statuses: [200, 201, 202, 204]
+          successes: 2
+        unhealthy:
+          interval: 30
+          http_statuses: [400, 401, 403, 404, 500, 501, 502, 503, 504, 505]
+          http_failures: 3
+          timeouts: 3
+      passive:
+        type: http
+        healthy:
+          http_statuses: [200, 201, 202, 204, 301, 302, 304]
+          successes: 3
+        unhealthy:
+          http_statuses: [400, 401, 403, 404, 429, 500, 501, 502, 503, 504, 505]
+          http_failures: 5
+          timeouts: 5
+    slots: 10000
+    targets:
+      - target: design-parser-1:8001
+        weight: 100
+        tags: [primary, zone-a]
+      - target: design-parser-2:8001
+        weight: 100  
+        tags: [secondary, zone-b]
+      - target: design-parser-3:8001
+        weight: 50
+        tags: [backup, zone-c]
+
+  # Translation Engine Upstream
+  - name: translation-engine-upstream
+    algorithm: least-connections  # For balanced LLM processing
+    healthchecks:
+      active:
+        type: http
+        http_path: /health
+        timeout: 10
+        healthy:
+          interval: 30
+          successes: 2
+        unhealthy:
+          interval: 30
+          http_failures: 3
+          timeouts: 2
+    targets:
+      - target: translation-engine-1:8002
+        weight: 100
+      - target: translation-engine-2:8002
+        weight: 100
+
+  # Export Engine Upstream
+  - name: export-engine-upstream
+    algorithm: round-robin
+    healthchecks:
+      active:
+        type: http
+        http_path: /health
+        healthy:
+          interval: 30
+          successes: 2
+        unhealthy:
+          interval: 30
+          http_failures: 3
+    targets:
+      - target: export-engine-1:8003
+        weight: 100
+      - target: export-engine-2:8003
+        weight: 100
+
+  # Collaboration Hub Upstream (WebSocket-aware)
+  - name: collaboration-hub-upstream
+    algorithm: ip-hash  # Sticky sessions for WebSocket
+    hash_on: ip
+    hash_on_header: X-User-ID
+    healthchecks:
+      active:
+        type: http
+        http_path: /health
+        healthy:
+          interval: 30
+          successes: 2
+        unhealthy:
+          interval: 30
+          http_failures: 3
+    targets:
+      - target: collaboration-hub-1:8004
+        weight: 100
+      - target: collaboration-hub-2:8004
+        weight: 100
+
+# ============================================================================
+# CERTIFICATE MANAGEMENT
+# ============================================================================
+
+certificates:
+  - cert: |
+      -----BEGIN CERTIFICATE-----
+      ${IMAGINEER_SSL_CERT}
+      -----END CERTIFICATE-----
+    key: |
+      -----BEGIN PRIVATE KEY-----
+      ${IMAGINEER_SSL_KEY}
+      -----END PRIVATE KEY-----
+    tags: [ssl, production]
+
+  - cert: |
+      -----BEGIN CERTIFICATE-----
+      ${IMAGINEER_STAGING_SSL_CERT}
+      -----END CERTIFICATE-----
+    key: |
+      -----BEGIN PRIVATE KEY-----
+      ${IMAGINEER_STAGING_SSL_KEY}
+      -----END PRIVATE KEY-----
+    tags: [ssl, staging]
+
+# ============================================================================
+# SNI CONFIGURATION
+# ============================================================================
+
+snis:
+  - name: api.imagineer.dev
+    certificate:
+      id: ${IMAGINEER_SSL_CERT_ID}
+    tags: [production, api]
+    
+  - name: staging-api.imagineer.dev
+    certificate:
+      id: ${IMAGINEER_STAGING_SSL_CERT_ID}
+    tags: [staging, api]
+
+# ============================================================================
+# VAULT INTEGRATION FOR SECRETS
+# ============================================================================
+
+vaults:
+  - name: env
+    prefix: env
+    config:
+      prefix: KONG_VAULT_
+      
+  - name: aws-secrets-manager
+    prefix: aws-sm
+    config:
+      region: ${AWS_REGION}
+      
+# ============================================================================
+# CLUSTERING & DEPLOYMENT CONFIGURATION
+# ============================================================================
+
+_info:
+  deployment:
+    environment: ${KONG_ENV}
+    cluster_id: ${KONG_CLUSTER_ID}
+    node_id: ${KONG_NODE_ID}
+    version: "3.0"
+    
+  contact:
+    team: "Platform Engineering"
+    email: "platform@imagineer.dev"
+    
+  configuration:
+    last_updated: "2024-01-09T12:00:00Z"
+    config_version: "1.2.0"
+    checksum: "${CONFIG_CHECKSUM}"

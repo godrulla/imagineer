@@ -1,0 +1,131 @@
+# Production-Optimized Multi-stage Dockerfile for Translation Engine Service
+# Features: security hardening, performance optimization, AI/ML optimizations
+
+# =============================================================================
+# BUILDER STAGE - Development dependencies and build process
+# =============================================================================
+FROM node:20-alpine as builder
+
+ARG NODE_ENV=production
+ARG BUILD_DATE
+ARG VERSION
+ARG COMMIT_HASH
+
+ENV NODE_ENV=${NODE_ENV}
+ENV NPM_CONFIG_CACHE=/tmp/.npm-cache
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apk add --no-cache --virtual .build-deps \
+    python3 \
+    make \
+    g++ \
+    pkgconfig
+
+COPY package*.json ./
+COPY tsconfig.json ./
+
+# Install dependencies
+RUN npm ci --include=dev --verbose
+
+COPY src/ ./src/
+
+# Build with optimizations for AI/ML workloads
+RUN npm run build
+
+# Clean up
+RUN npm prune --production && \
+    npm cache clean --force && \
+    rm -rf /tmp/.npm-cache
+
+# =============================================================================
+# PRODUCTION STAGE - Optimized for AI/ML processing
+# =============================================================================
+FROM node:20-alpine as production
+
+LABEL maintainer="Armando Diaz Silverio <armando@exxede.com>"
+LABEL version=${VERSION}
+LABEL build-date=${BUILD_DATE}
+LABEL commit-hash=${COMMIT_HASH}
+LABEL service="translation-engine"
+LABEL environment="production"
+
+# Environment optimized for LLM processing
+ENV NODE_ENV=production
+ENV NODE_OPTIONS="--max-old-space-size=2048 --enable-source-maps --optimize-for-size"
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+ENV UV_THREADPOOL_SIZE=128
+
+# Install runtime dependencies
+RUN apk add --no-cache \
+    curl \
+    dumb-init \
+    # Math libraries for ML operations
+    libc6-compat \
+    && rm -rf /var/cache/apk/*
+
+WORKDIR /app
+
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S imagineer -u 1001 -G nodejs
+
+# Create directories for AI/ML operations
+RUN mkdir -p logs temp models cache embeddings && \
+    chown -R imagineer:nodejs logs temp models cache embeddings && \
+    chmod 755 logs temp models cache embeddings
+
+# Copy application
+COPY --from=builder --chown=imagineer:nodejs /app/dist ./dist
+COPY --from=builder --chown=imagineer:nodejs /app/package*.json ./
+COPY --from=builder --chown=imagineer:nodejs /app/node_modules ./node_modules
+
+# Health check script
+RUN echo '#!/bin/sh\nwget --no-verbose --tries=1 --spider http://localhost:8002/health || exit 1' > /app/healthcheck.sh && \
+    chmod +x /app/healthcheck.sh && \
+    chown imagineer:nodejs /app/healthcheck.sh
+
+USER imagineer
+
+# Security: Read-only application files
+RUN chmod -R 555 /app/dist /app/node_modules
+
+HEALTHCHECK --interval=30s --timeout=15s --start-period=60s --retries=3 \
+    CMD /app/healthcheck.sh
+
+EXPOSE 8002
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "--unhandled-rejections=strict", "--trace-warnings", "dist/index.js"]
+
+# =============================================================================
+# DEVELOPMENT STAGE
+# =============================================================================
+FROM node:20-alpine as development
+
+ENV NODE_ENV=development
+
+WORKDIR /app
+
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++
+
+COPY package*.json ./
+COPY tsconfig.json ./
+
+RUN npm install
+
+COPY src/ ./src/
+
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S imagineer -u 1001 -G nodejs
+
+USER imagineer
+
+EXPOSE 8002
+
+CMD ["npm", "run", "dev"]

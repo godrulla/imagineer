@@ -1,0 +1,1363 @@
+# ============================================================================
+# SHARED API SCHEMAS AND COMMON DATA MODELS
+# Reusable schemas, error responses, and data models across all Imagineer services
+# ============================================================================
+
+openapi: 3.0.3
+info:
+  title: Imagineer Platform - Shared Schemas
+  description: |
+    Common API schemas, error response standards, and shared data models 
+    used across all Imagineer microservices. This specification provides 
+    consistency and reusability for API contracts.
+    
+    ## Usage
+    These schemas can be referenced in individual service specifications using:
+    ```yaml
+    $ref: 'shared-schemas.yaml#/components/schemas/ErrorResponse'
+    ```
+    
+    ## Standards
+    - All UUIDs use format: uuid (RFC 4122)
+    - All timestamps use format: date-time (RFC 3339)
+    - All URLs use format: uri (RFC 3986)
+    - All emails use custom format: email (RFC 5322)
+    - Pagination follows consistent patterns
+    - Error responses follow RFC 7807 (Problem Details)
+  version: "1.0.0"
+  contact:
+    name: Imagineer API Support
+    url: https://docs.imagineer.dev
+    email: api-support@imagineer.dev
+
+components:
+  schemas:
+    # ========================================================================
+    # CORE ENTITY IDENTIFIERS
+    # ========================================================================
+    
+    OrganizationId:
+      type: string
+      format: uuid
+      description: Unique organization identifier
+      example: "123e4567-e89b-12d3-a456-426614174000"
+      
+    ProjectId:
+      type: string
+      format: uuid
+      description: Unique project identifier
+      example: "123e4567-e89b-12d3-a456-426614174001"
+      
+    UserId:
+      type: string
+      format: uuid
+      description: Unique user identifier
+      example: "123e4567-e89b-12d3-a456-426614174002"
+      
+    TeamId:
+      type: string
+      format: uuid
+      description: Unique team identifier
+      example: "123e4567-e89b-12d3-a456-426614174003"
+      
+    JobId:
+      type: string
+      format: uuid
+      description: Unique background job identifier
+      example: "123e4567-e89b-12d3-a456-426614174004"
+
+    # ========================================================================
+    # COMMON PRIMITIVE TYPES
+    # ========================================================================
+    
+    Timestamp:
+      type: string
+      format: date-time
+      description: ISO 8601 timestamp with timezone
+      example: "2024-01-09T12:00:00.000Z"
+      
+    Email:
+      type: string
+      format: email
+      pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+      maxLength: 254
+      description: Valid email address
+      example: "user@imagineer.dev"
+      
+    Url:
+      type: string
+      format: uri
+      maxLength: 2048
+      description: Valid URL
+      example: "https://api.imagineer.dev/resource"
+      
+    PhoneNumber:
+      type: string
+      pattern: '^\+[1-9]\d{1,14}$'
+      description: E.164 formatted phone number
+      example: "+1234567890"
+      
+    Slug:
+      type: string
+      pattern: '^[a-z0-9-]+$'
+      minLength: 1
+      maxLength: 255
+      description: URL-safe identifier
+      example: "my-project-name"
+      
+    HexColor:
+      type: string
+      pattern: '^#[a-fA-F0-9]{6}$'
+      description: Hexadecimal color code
+      example: "#FF0000"
+      
+    Locale:
+      type: string
+      pattern: '^[a-z]{2}-[A-Z]{2}$'
+      description: Locale code (language-country)
+      example: "en-US"
+      
+    Timezone:
+      type: string
+      description: IANA timezone identifier
+      example: "America/New_York"
+      
+    Currency:
+      type: string
+      pattern: '^[A-Z]{3}$'
+      description: ISO 4217 currency code
+      example: "USD"
+
+    # ========================================================================
+    # COMMON ENUMS
+    # ========================================================================
+    
+    Status:
+      type: string
+      enum: [active, inactive, pending, suspended, deleted, archived]
+      description: Common entity status
+      
+    Priority:
+      type: string
+      enum: [low, normal, high, urgent, critical]
+      description: Priority levels
+      
+    Visibility:
+      type: string
+      enum: [private, team, organization, public]
+      description: Visibility/access levels
+      
+    UserRole:
+      type: string
+      enum: [owner, admin, editor, collaborator, viewer, guest]
+      description: User roles in organization/project context
+      
+    SubscriptionTier:
+      type: string
+      enum: [free, starter, professional, enterprise, custom]
+      description: Subscription tier levels
+      
+    NotificationChannel:
+      type: string
+      enum: [email, push, sms, webhook, in_app]
+      description: Notification delivery channels
+      
+    FileType:
+      type: string
+      enum: [image, video, audio, document, archive, code, data, design]
+      description: General file type categories
+
+    # ========================================================================
+    # PAGINATION SCHEMAS
+    # ========================================================================
+    
+    PaginationRequest:
+      type: object
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          default: 1
+          description: Page number (1-indexed)
+          example: 1
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+          description: Number of items per page
+          example: 20
+        sort:
+          type: string
+          pattern: '^[a-zA-Z_][a-zA-Z0-9_]*:(asc|desc)$'
+          default: 'created_at:desc'
+          description: Sort field and direction
+          example: "created_at:desc"
+          
+    PaginationResponse:
+      type: object
+      required: [page, limit, total, pages, has_next, has_prev]
+      properties:
+        page:
+          type: integer
+          minimum: 1
+          description: Current page number
+          example: 1
+        limit:
+          type: integer
+          minimum: 1
+          description: Items per page
+          example: 20
+        total:
+          type: integer
+          minimum: 0
+          description: Total number of items
+          example: 157
+        pages:
+          type: integer
+          minimum: 0
+          description: Total number of pages
+          example: 8
+        has_next:
+          type: boolean
+          description: Whether there are more pages
+          example: true
+        has_prev:
+          type: boolean
+          description: Whether there are previous pages
+          example: false
+        next_page:
+          type: integer
+          nullable: true
+          description: Next page number if available
+          example: 2
+        prev_page:
+          type: integer
+          nullable: true
+          description: Previous page number if available
+          example: null
+          
+    PaginatedResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          description: Array of data items
+          items: {}
+        pagination:
+          $ref: '#/components/schemas/PaginationResponse'
+        metadata:
+          type: object
+          description: Additional metadata
+          additionalProperties: true
+
+    # ========================================================================
+    # SEARCH AND FILTERING
+    # ========================================================================
+    
+    SearchRequest:
+      type: object
+      properties:
+        query:
+          type: string
+          maxLength: 500
+          description: Search query string
+          example: "design system components"
+        filters:
+          type: object
+          description: Additional filters
+          additionalProperties: true
+        facets:
+          type: array
+          items:
+            type: string
+          description: Facets to include in response
+        highlight:
+          type: boolean
+          default: false
+          description: Whether to highlight matching terms
+          
+    SearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SearchResult'
+        total_results:
+          type: integer
+          minimum: 0
+        search_time_ms:
+          type: number
+          minimum: 0
+        facets:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              values:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    value:
+                      type: string
+                    count:
+                      type: integer
+                      
+    SearchResult:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        url:
+          type: string
+          format: uri
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+        highlights:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
+    # ========================================================================
+    # FILE AND MEDIA SCHEMAS
+    # ========================================================================
+    
+    FileMetadata:
+      type: object
+      required: [id, filename, size_bytes, mime_type, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique file identifier
+        filename:
+          type: string
+          maxLength: 500
+          description: Original filename
+          example: "design-mockup.fig"
+        size_bytes:
+          type: integer
+          minimum: 0
+          maximum: 10737418240  # 10GB
+          description: File size in bytes
+          example: 2048576
+        mime_type:
+          type: string
+          maxLength: 100
+          description: MIME type
+          example: "application/octet-stream"
+        file_type:
+          $ref: '#/components/schemas/FileType'
+        hash_sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: SHA256 hash of file content
+          example: "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"
+        storage_provider:
+          type: string
+          enum: [s3, gcs, azure, local]
+          description: Storage provider
+        storage_path:
+          type: string
+          maxLength: 1000
+          description: Storage path/key
+        public_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Public access URL
+        expires_at:
+          $ref: '#/components/schemas/Timestamp'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        created_by:
+          $ref: '#/components/schemas/UserId'
+        
+    Dimensions:
+      type: object
+      required: [width, height]
+      properties:
+        width:
+          type: number
+          minimum: 0
+          description: Width in pixels or units
+          example: 1920
+        height:
+          type: number
+          minimum: 0
+          description: Height in pixels or units
+          example: 1080
+        depth:
+          type: number
+          minimum: 0
+          nullable: true
+          description: Depth for 3D objects
+          example: 100
+          
+    Position:
+      type: object
+      required: [x, y]
+      properties:
+        x:
+          type: number
+          description: X coordinate
+          example: 100.5
+        y:
+          type: number
+          description: Y coordinate
+          example: 250.0
+        z:
+          type: number
+          nullable: true
+          description: Z coordinate for 3D positioning
+          example: 0
+
+    # ========================================================================
+    # USER AND ORGANIZATION SCHEMAS
+    # ========================================================================
+    
+    UserSummary:
+      type: object
+      required: [id, display_name]
+      properties:
+        id:
+          $ref: '#/components/schemas/UserId'
+        display_name:
+          type: string
+          maxLength: 200
+          description: User's display name
+          example: "John Doe"
+        username:
+          type: string
+          pattern: '^[a-zA-Z0-9_.-]+$'
+          maxLength: 50
+          nullable: true
+          description: Unique username
+          example: "johndoe"
+        email:
+          $ref: '#/components/schemas/Email'
+        avatar_url:
+          $ref: '#/components/schemas/Url'
+        role:
+          $ref: '#/components/schemas/UserRole'
+        status:
+          $ref: '#/components/schemas/Status'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        
+    OrganizationSummary:
+      type: object
+      required: [id, name, slug]
+      properties:
+        id:
+          $ref: '#/components/schemas/OrganizationId'
+        name:
+          type: string
+          maxLength: 255
+          description: Organization name
+          example: "Acme Corporation"
+        slug:
+          $ref: '#/components/schemas/Slug'
+        description:
+          type: string
+          maxLength: 1000
+          nullable: true
+          description: Organization description
+        logo_url:
+          $ref: '#/components/schemas/Url'
+        website_url:
+          $ref: '#/components/schemas/Url'
+        subscription_tier:
+          $ref: '#/components/schemas/SubscriptionTier'
+        member_count:
+          type: integer
+          minimum: 0
+          description: Number of organization members
+          example: 25
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        
+    TeamSummary:
+      type: object
+      required: [id, name, organization_id]
+      properties:
+        id:
+          $ref: '#/components/schemas/TeamId'
+        organization_id:
+          $ref: '#/components/schemas/OrganizationId'
+        name:
+          type: string
+          maxLength: 255
+          description: Team name
+          example: "Design Team"
+        slug:
+          $ref: '#/components/schemas/Slug'
+        description:
+          type: string
+          maxLength: 1000
+          nullable: true
+          description: Team description
+        icon_emoji:
+          type: string
+          pattern: '^[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]$'
+          nullable: true
+          description: Team icon emoji
+          example: "🎨"
+        color:
+          $ref: '#/components/schemas/HexColor'
+        member_count:
+          type: integer
+          minimum: 0
+          description: Number of team members
+          example: 8
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    # ========================================================================
+    # ERROR RESPONSE SCHEMAS (RFC 7807)
+    # ========================================================================
+    
+    ErrorResponse:
+      type: object
+      required: [type, title, status, detail]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: URI reference that identifies the problem type
+          example: "https://docs.imagineer.dev/errors/validation-error"
+        title:
+          type: string
+          description: Human-readable summary of the problem type
+          example: "Validation Error"
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+          description: HTTP status code
+          example: 400
+        detail:
+          type: string
+          description: Human-readable explanation specific to this occurrence
+          example: "The 'email' field is required and must be a valid email address"
+        instance:
+          type: string
+          format: uri
+          nullable: true
+          description: URI reference that identifies the specific occurrence
+          example: "/api/v1/users/create"
+        timestamp:
+          $ref: '#/components/schemas/Timestamp'
+        request_id:
+          type: string
+          format: uuid
+          description: Unique request identifier for tracking
+          example: "123e4567-e89b-12d3-a456-426614174005"
+        error_code:
+          type: string
+          pattern: '^[A-Z_]+$'
+          description: Machine-readable error code
+          example: "VALIDATION_ERROR"
+        documentation_url:
+          type: string
+          format: uri
+          nullable: true
+          description: URL to relevant documentation
+          example: "https://docs.imagineer.dev/api/errors#validation-error"
+        metadata:
+          type: object
+          description: Additional error-specific metadata
+          additionalProperties: true
+          
+    ValidationError:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          properties:
+            validation_errors:
+              type: array
+              items:
+                $ref: '#/components/schemas/ValidationFieldError'
+              description: Array of field-specific validation errors
+              
+    ValidationFieldError:
+      type: object
+      required: [field, code, message]
+      properties:
+        field:
+          type: string
+          description: Name of the field that failed validation
+          example: "email"
+        code:
+          type: string
+          pattern: '^[A-Z_]+$'
+          description: Machine-readable validation error code
+          example: "INVALID_FORMAT"
+        message:
+          type: string
+          description: Human-readable validation error message
+          example: "Must be a valid email address"
+        value:
+          description: The invalid value that was provided
+          nullable: true
+          example: "invalid-email"
+        constraints:
+          type: object
+          description: Validation constraints that were violated
+          additionalProperties: true
+          example:
+            pattern: "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+            
+    AuthenticationError:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          properties:
+            auth_method:
+              type: string
+              enum: [jwt, api_key, oauth, basic]
+              description: Authentication method that failed
+            realm:
+              type: string
+              description: Authentication realm
+              example: "Imagineer API"
+              
+    AuthorizationError:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          properties:
+            required_permissions:
+              type: array
+              items:
+                type: string
+              description: Permissions required for this operation
+              example: ["projects:write", "organizations:admin"]
+            user_permissions:
+              type: array
+              items:
+                type: string
+              description: Permissions the user currently has
+              example: ["projects:read", "projects:write"]
+              
+    RateLimitError:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          properties:
+            rate_limit:
+              type: object
+              properties:
+                limit:
+                  type: integer
+                  description: Request limit
+                  example: 1000
+                remaining:
+                  type: integer
+                  description: Remaining requests
+                  example: 0
+                reset_at:
+                  $ref: '#/components/schemas/Timestamp'
+                window_seconds:
+                  type: integer
+                  description: Rate limit window in seconds
+                  example: 3600
+                  
+    ConflictError:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          properties:
+            conflicting_resource:
+              type: object
+              properties:
+                type:
+                  type: string
+                  description: Type of conflicting resource
+                  example: "user"
+                id:
+                  type: string
+                  description: ID of conflicting resource
+                  example: "123e4567-e89b-12d3-a456-426614174000"
+                field:
+                  type: string
+                  description: Field that conflicts
+                  example: "email"
+
+    # ========================================================================
+    # ACTIVITY AND AUDIT SCHEMAS
+    # ========================================================================
+    
+    ActivityEvent:
+      type: object
+      required: [id, type, actor_id, object_type, object_id, timestamp]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique activity event identifier
+        type:
+          type: string
+          description: Activity type
+          example: "project.created"
+        actor_id:
+          $ref: '#/components/schemas/UserId'
+        actor_name:
+          type: string
+          description: Display name of the actor
+          example: "John Doe"
+        object_type:
+          type: string
+          description: Type of object being acted upon
+          example: "project"
+        object_id:
+          type: string
+          format: uuid
+          description: ID of the object being acted upon
+        object_name:
+          type: string
+          nullable: true
+          description: Name of the object being acted upon
+          example: "Mobile App Redesign"
+        description:
+          type: string
+          description: Human-readable activity description
+          example: "Created project 'Mobile App Redesign'"
+        metadata:
+          type: object
+          description: Additional activity-specific data
+          additionalProperties: true
+        ip_address:
+          type: string
+          nullable: true
+          description: IP address of the actor
+          example: "192.168.1.100"
+        user_agent:
+          type: string
+          nullable: true
+          description: User agent of the actor
+          example: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"
+        timestamp:
+          $ref: '#/components/schemas/Timestamp'
+        organization_id:
+          $ref: '#/components/schemas/OrganizationId'
+        
+    AuditLog:
+      type: object
+      required: [id, event_type, resource_type, resource_id, actor_id, timestamp]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique audit log entry identifier
+        event_type:
+          type: string
+          enum: [create, read, update, delete, login, logout, permission_change]
+          description: Type of event being audited
+        resource_type:
+          type: string
+          description: Type of resource being audited
+          example: "project"
+        resource_id:
+          type: string
+          format: uuid
+          description: ID of the resource being audited
+        actor_id:
+          $ref: '#/components/schemas/UserId'
+        actor_email:
+          $ref: '#/components/schemas/Email'
+        changes:
+          type: object
+          description: Before and after values for update events
+          properties:
+            before:
+              type: object
+              additionalProperties: true
+            after:
+              type: object
+              additionalProperties: true
+        request_id:
+          type: string
+          format: uuid
+          description: Request ID for correlation
+        session_id:
+          type: string
+          nullable: true
+          description: Session ID if applicable
+        ip_address:
+          type: string
+          nullable: true
+          description: IP address of the actor
+        user_agent:
+          type: string
+          nullable: true
+          description: User agent of the actor
+        timestamp:
+          $ref: '#/components/schemas/Timestamp'
+        organization_id:
+          $ref: '#/components/schemas/OrganizationId'
+
+    # ========================================================================
+    # NOTIFICATION SCHEMAS
+    # ========================================================================
+    
+    NotificationPreferences:
+      type: object
+      properties:
+        email:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+              default: true
+            frequency:
+              type: string
+              enum: [immediate, daily, weekly, never]
+              default: immediate
+            types:
+              type: array
+              items:
+                type: string
+              description: Notification types to receive via email
+        push:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+              default: true
+            types:
+              type: array
+              items:
+                type: string
+        in_app:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+              default: true
+            types:
+              type: array
+              items:
+                type: string
+        webhook:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+              default: false
+            url:
+              $ref: '#/components/schemas/Url'
+            secret:
+              type: string
+              nullable: true
+              description: Secret for webhook signature verification
+            events:
+              type: array
+              items:
+                type: string
+              description: Event types to send to webhook
+
+    # ========================================================================
+    # API METADATA SCHEMAS
+    # ========================================================================
+    
+    ApiVersion:
+      type: object
+      properties:
+        version:
+          type: string
+          pattern: '^v\d+$'
+          description: API version
+          example: "v1"
+        status:
+          type: string
+          enum: [current, deprecated, sunset]
+          description: Version status
+        deprecation_date:
+          type: string
+          format: date
+          nullable: true
+          description: Date when version was deprecated
+        sunset_date:
+          type: string
+          format: date
+          nullable: true
+          description: Date when version will be removed
+        documentation_url:
+          $ref: '#/components/schemas/Url'
+          
+    HealthCheck:
+      type: object
+      required: [status, timestamp, version]
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+          description: Overall service health status
+        timestamp:
+          $ref: '#/components/schemas/Timestamp'
+        version:
+          type: string
+          description: Service version
+          example: "1.2.3"
+        uptime_seconds:
+          type: integer
+          minimum: 0
+          description: Service uptime in seconds
+        checks:
+          type: object
+          description: Individual health checks
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+                enum: [pass, fail, warn]
+              response_time_ms:
+                type: number
+                minimum: 0
+              last_check:
+                $ref: '#/components/schemas/Timestamp'
+              details:
+                type: object
+                additionalProperties: true
+        environment:
+          type: string
+          enum: [development, staging, production]
+          description: Deployment environment
+          
+    ServiceInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Service name
+          example: "design-parser"
+        version:
+          type: string
+          description: Service version
+          example: "1.2.3"
+        description:
+          type: string
+          description: Service description
+        api_version:
+          type: string
+          description: API version
+          example: "v1"
+        documentation_url:
+          $ref: '#/components/schemas/Url'
+        support_email:
+          $ref: '#/components/schemas/Email'
+        build_info:
+          type: object
+          properties:
+            commit_hash:
+              type: string
+              description: Git commit hash
+            build_date:
+              $ref: '#/components/schemas/Timestamp'
+            branch:
+              type: string
+              description: Git branch
+        dependencies:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              version:
+                type: string
+              status:
+                type: string
+                enum: [healthy, unhealthy]
+
+    # ========================================================================
+    # WEBHOOK SCHEMAS
+    # ========================================================================
+    
+    WebhookEvent:
+      type: object
+      required: [id, type, timestamp, data]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique event identifier
+        type:
+          type: string
+          description: Event type
+          example: "project.created"
+        timestamp:
+          $ref: '#/components/schemas/Timestamp'
+        api_version:
+          type: string
+          description: API version when event was generated
+          example: "v1"
+        data:
+          type: object
+          description: Event-specific data
+          additionalProperties: true
+        organization_id:
+          $ref: '#/components/schemas/OrganizationId'
+        actor:
+          $ref: '#/components/schemas/UserSummary'
+        
+    WebhookDelivery:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique delivery identifier
+        webhook_id:
+          type: string
+          format: uuid
+          description: Webhook configuration identifier
+        event_id:
+          type: string
+          format: uuid
+          description: Event identifier
+        url:
+          $ref: '#/components/schemas/Url'
+        status:
+          type: string
+          enum: [pending, success, failed, timeout]
+          description: Delivery status
+        attempt:
+          type: integer
+          minimum: 1
+          description: Delivery attempt number
+        http_status:
+          type: integer
+          nullable: true
+          description: HTTP response status code
+        response_body:
+          type: string
+          nullable: true
+          description: HTTP response body (truncated)
+        error_message:
+          type: string
+          nullable: true
+          description: Error message if delivery failed
+        delivered_at:
+          $ref: '#/components/schemas/Timestamp'
+        next_retry_at:
+          $ref: '#/components/schemas/Timestamp'
+
+# ============================================================================
+# REUSABLE PARAMETERS
+# ============================================================================
+
+  parameters:
+    OrganizationIdParam:
+      name: organizationId
+      in: path
+      required: true
+      description: Organization identifier
+      schema:
+        $ref: '#/components/schemas/OrganizationId'
+        
+    ProjectIdParam:
+      name: projectId
+      in: path
+      required: true
+      description: Project identifier
+      schema:
+        $ref: '#/components/schemas/ProjectId'
+        
+    UserIdParam:
+      name: userId
+      in: path
+      required: true
+      description: User identifier
+      schema:
+        $ref: '#/components/schemas/UserId'
+        
+    PageParam:
+      name: page
+      in: query
+      description: Page number for pagination
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+        
+    LimitParam:
+      name: limit
+      in: query
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+        
+    SortParam:
+      name: sort
+      in: query
+      description: Sort order (field:direction)
+      schema:
+        type: string
+        pattern: '^[a-zA-Z_][a-zA-Z0-9_]*:(asc|desc)$'
+        default: 'created_at:desc'
+        
+    SearchParam:
+      name: search
+      in: query
+      description: Search query string
+      schema:
+        type: string
+        maxLength: 500
+        
+    StatusParam:
+      name: status
+      in: query
+      description: Filter by status
+      schema:
+        $ref: '#/components/schemas/Status'
+        
+    CreatedAfterParam:
+      name: created_after
+      in: query
+      description: Filter items created after this timestamp
+      schema:
+        type: string
+        format: date-time
+        
+    CreatedBeforeParam:
+      name: created_before
+      in: query
+      description: Filter items created before this timestamp
+      schema:
+        type: string
+        format: date-time
+
+# ============================================================================
+# COMMON RESPONSE TEMPLATES
+# ============================================================================
+
+  responses:
+    # Success Responses
+    OK:
+      description: Successful operation
+      content:
+        application/json:
+          schema:
+            type: object
+            
+    Created:
+      description: Resource created successfully
+      headers:
+        Location:
+          schema:
+            type: string
+            format: uri
+          description: URL of the created resource
+      content:
+        application/json:
+          schema:
+            type: object
+            
+    NoContent:
+      description: Successful operation with no content
+      
+    # Error Responses
+    BadRequest:
+      description: Bad request - invalid input parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationError'
+          example:
+            type: "https://docs.imagineer.dev/errors/validation-error"
+            title: "Validation Error"
+            status: 400
+            detail: "Request validation failed"
+            instance: "/api/v1/projects"
+            timestamp: "2024-01-09T12:00:00.000Z"
+            request_id: "123e4567-e89b-12d3-a456-426614174005"
+            error_code: "VALIDATION_ERROR"
+            validation_errors:
+              - field: "name"
+                code: "REQUIRED"
+                message: "Name is required"
+                value: null
+                
+    Unauthorized:
+      description: Unauthorized - authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthenticationError'
+          example:
+            type: "https://docs.imagineer.dev/errors/authentication-error"
+            title: "Authentication Required"
+            status: 401
+            detail: "Valid authentication credentials are required"
+            instance: "/api/v1/projects"
+            timestamp: "2024-01-09T12:00:00.000Z"
+            request_id: "123e4567-e89b-12d3-a456-426614174005"
+            error_code: "AUTHENTICATION_REQUIRED"
+            auth_method: "jwt"
+            
+    Forbidden:
+      description: Forbidden - insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthorizationError'
+          example:
+            type: "https://docs.imagineer.dev/errors/authorization-error"
+            title: "Insufficient Permissions"
+            status: 403
+            detail: "You do not have permission to perform this action"
+            instance: "/api/v1/projects/123/delete"
+            timestamp: "2024-01-09T12:00:00.000Z"
+            request_id: "123e4567-e89b-12d3-a456-426614174005"
+            error_code: "INSUFFICIENT_PERMISSIONS"
+            required_permissions: ["projects:delete"]
+            user_permissions: ["projects:read", "projects:write"]
+            
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            type: "https://docs.imagineer.dev/errors/not-found"
+            title: "Resource Not Found"
+            status: 404
+            detail: "The requested resource was not found"
+            instance: "/api/v1/projects/nonexistent"
+            timestamp: "2024-01-09T12:00:00.000Z"
+            request_id: "123e4567-e89b-12d3-a456-426614174005"
+            error_code: "RESOURCE_NOT_FOUND"
+            
+    Conflict:
+      description: Conflict - resource already exists or constraint violation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ConflictError'
+          example:
+            type: "https://docs.imagineer.dev/errors/conflict"
+            title: "Resource Conflict"
+            status: 409
+            detail: "A resource with this identifier already exists"
+            instance: "/api/v1/projects"
+            timestamp: "2024-01-09T12:00:00.000Z"
+            request_id: "123e4567-e89b-12d3-a456-426614174005"
+            error_code: "RESOURCE_CONFLICT"
+            conflicting_resource:
+              type: "project"
+              id: "123e4567-e89b-12d3-a456-426614174001"
+              field: "slug"
+              
+    TooManyRequests:
+      description: Rate limit exceeded
+      headers:
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+          description: Request limit per time window
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+          description: Remaining requests in current window
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+          description: Time when rate limit resets (Unix timestamp)
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds to wait before retrying
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RateLimitError'
+          example:
+            type: "https://docs.imagineer.dev/errors/rate-limit"
+            title: "Rate Limit Exceeded"
+            status: 429
+            detail: "Request rate limit exceeded"
+            instance: "/api/v1/translate"
+            timestamp: "2024-01-09T12:00:00.000Z"
+            request_id: "123e4567-e89b-12d3-a456-426614174005"
+            error_code: "RATE_LIMIT_EXCEEDED"
+            rate_limit:
+              limit: 100
+              remaining: 0
+              reset_at: "2024-01-09T12:01:00.000Z"
+              window_seconds: 60
+              
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            type: "https://docs.imagineer.dev/errors/internal-error"
+            title: "Internal Server Error"
+            status: 500
+            detail: "An unexpected error occurred while processing your request"
+            instance: "/api/v1/projects"
+            timestamp: "2024-01-09T12:00:00.000Z"
+            request_id: "123e4567-e89b-12d3-a456-426614174005"
+            error_code: "INTERNAL_ERROR"
+            documentation_url: "https://docs.imagineer.dev/api/errors#internal-error"
+
+# ============================================================================
+# COMMON HEADERS
+# ============================================================================
+
+  headers:
+    X-Request-ID:
+      description: Unique request identifier for tracking
+      schema:
+        type: string
+        format: uuid
+        
+    X-Response-Time:
+      description: Response time in milliseconds
+      schema:
+        type: number
+        
+    X-API-Version:
+      description: API version used
+      schema:
+        type: string
+        
+    X-Rate-Limit-Limit:
+      description: Request limit per time window
+      schema:
+        type: integer
+        
+    X-Rate-Limit-Remaining:
+      description: Remaining requests in current window
+      schema:
+        type: integer
+        
+    X-Rate-Limit-Reset:
+      description: Time when rate limit resets (Unix timestamp)
+      schema:
+        type: integer
