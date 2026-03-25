@@ -9,7 +9,7 @@ elite_agents:
   - APEX
   project_context:
     project_name: imagineer
-    project_path: /Users/mando/Desktop/imagineer
+    project_path: ./
     detected_types:
     - enterprise-architecture
     has_git: false
